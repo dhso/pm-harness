@@ -22,6 +22,6 @@
 - 验证指标和复查时间；
 - 状态 `proposed`。
 
-用户批准后才更新 `governance/rules.md`。后续检查问题是否复发，并建议保留、收窄、修订或退役规则。
+`governance/rules.json` 是规则事实源，`governance/rules.md` 自动生成。达到阈值时 `maintain` 只生成一份按 `pattern_key` 去重的提案，绝不自动激活。用户批准后才激活；后续比较规则生效后的同类观察，并建议保留、收窄、修订或退役。
 
-提案生命周期为 `proposed → approved → active`，也可进入 `rejected` 或 `retired`。批准人和生效时间分别记录；只有 `active` 规则进入 `governance/rules.md`。
+提案生命周期为 `proposed → approved → active`，也可进入 `rejected` 或 `retired`。批准时间、生效时间和复查时间分别记录；只有 `active` 规则进入生成视图。内置审批、事务、证据和 Git 护栏不可由项目级规则覆盖。

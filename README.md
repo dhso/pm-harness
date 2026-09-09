@@ -9,6 +9,7 @@
 - 启动和规划一个独立项目；
 - 日常跟进任务、时间点、风险和阻塞；
 - 从邮件、聊天、截图、附件或随手记录中提取项目事项；
+- 起草可直接发送的项目邮件、升级说明、决策请求和会议跟进；
 - 编写或变更需求、验收标准和项目范围；
 - 制作周报、方案、会议纪要、PRD、汇报材料等交付物；
 - 沉淀可追溯的项目 Wiki、决策和经验；
@@ -40,6 +41,9 @@
 
 - `这是一封客户邮件，帮我登记并提取需求、行动项和风险。`
 - `把这些聊天截图整理成项目事实、待办和待确认事项。`
+- `根据这些记录写会议纪要；我确认后，把行动项、需求、排期和风险同步到项目。`
+- `根据当前进展给客户写一封简短但信息完整的延期说明，先不要发送。`
+- `把会议结论写成跟进邮件，列清负责人、日期和待确认问题。`
 - `这是今天的工作记录，更新进度、甘特图和下一步。`
 - `这条消息可能改变验收范围，先分析影响，不要直接修改基线。`
 
@@ -50,10 +54,11 @@
 - `根据目前资料写一份 PRD，缺少的关键信息再问我。`
 - `把这条反馈作为候选需求记录，并给出验收标准。`
 - `为管理层制作本周项目周报。`
+- `把周报改得更像项目经理写的：结论前置、说人话，但不要丢日期、数字和风险。`
 - `根据评审意见修订方案，保留旧版本和变更关系。`
 - `客户已经确认验收，请更新交付状态。`
 
-文件生成、批准、发送和验收是不同状态。ChatGPT 不会因为文件已经生成就把它记录为已交付或已验收。
+文件生成、批准、发送和验收是不同状态。ChatGPT 不会因为文件已经生成就把它记录为已交付或已验收；批准后还会用文件 SHA-256 检测原地覆盖。
 
 ## Harness 的工作闭环
 
@@ -96,8 +101,7 @@ pm-harness/
 ├── governance/                有效规则、规则提案和变更记录
 ├── archive/                   不进入 Git 的原始资料及其可追溯索引
 ├── templates/                 常用项目管理文档模板
-├── skills/                    按场景拆分的项目管理工作能力
-├── .agents/skills             ChatGPT 的 Skills 发现入口
+├── .agents/skills/            实体、可跨平台复制的项目管理 Skills
 ├── .harness/                  后台自动化、数据契约和检查规则
 ├── tests/                     Harness 自动回归测试
 ├── .gitignore                 Git 排除策略
@@ -109,7 +113,8 @@ pm-harness/
 
 | 路径 | 作用 | 维护方式 |
 |---|---|---|
-| `project/project.json` | 项目名称、目标、范围、成功标准、约束、状态、时区和干系人 | 初始化时建立；重大变化需先确认 |
+| `project/project.json` | 项目名称、目标、范围、成功标准、约束、状态和时区 | 初始化时建立；重大变化需先确认 |
+| `project/stakeholders.json` | `STK-###` 干系人、角色、组织、状态、审批范围、来源和更新时间 | 权限授予或扩大前必须由用户确认 |
 | `project/status.md` | 给人阅读的当前状态摘要，包括重点、阻塞和下一步 | 进展或状态显著变化后更新 |
 | `project/schedule.json` | 任务、里程碑、负责人、依赖、进度以及基线/预测/实际时间的唯一结构化事实源 | ChatGPT 根据计划和进展维护 |
 | `project/gantt.md` | 从时间计划自动生成的 Mermaid 甘特图和时间偏差表 | 自动生成，不应手工编辑 |
@@ -122,7 +127,7 @@ pm-harness/
 - `forecast_*`：根据当前进展做出的最新预测；用于显示提前或延期。
 - `actual_*`：实际开始和完成时间；用于复盘和交付证明。
 
-因此，延期会表现为预测相对基线的偏差，而不是通过移动基线被隐藏。
+`schedule.baseline` 同时保存 revision、当前日期字段的 digest、批准人、批准时间和关联变更请求。任何直接改动都会造成摘要或批准日志不一致并被检查阻止。因此，延期会表现为预测相对基线的偏差，而不是通过移动基线被隐藏。
 
 ## `knowledge/`：来源和 Wiki
 
@@ -130,6 +135,7 @@ pm-harness/
 |---|---|---|
 | `knowledge/sources.json` | 邮件、聊天、截图、文档等来源的结构化登记，保存来源 ID、摘要、时间、发送者、定位信息和哈希 | 是 |
 | `knowledge/inbox.json` | 从来源中提取、尚待处理的事实、反馈、请求、决定、承诺、行动、风险、问题、疑问和假设 | 是 |
+| `knowledge/catalog.json` | `WIKI-###`、页面路径、状态、来源、关联对象与复查日期的事实源 | 是 |
 | `knowledge/wiki/` | 按主题整理并带来源追溯的长期项目知识 | 是 |
 | `knowledge/index.md` | Wiki 页面导航 | 是；自动生成 |
 
@@ -160,8 +166,9 @@ Wiki 只保存整理后的项目知识和必要引用，不复制整封邮件、
 
 | 路径 | 作用 |
 |---|---|
-| `activity/index.md` | 活动记录说明和入口 |
-| `activity/YYYY-MM-DD.md` | 当天实际完成的动作、时间、结果、关联 ID、证据和下一步 |
+| `activity/log.json` | `ACT-###` 活动、准确时间、结果、关联 ID、证据和下一步的唯一事实源 |
+| `activity/index.md` | 自动生成的日期索引 |
+| `activity/YYYY-MM-DD.md` | 按项目时区自动生成的当日可读视图，不应手工编辑 |
 
 活动记录回答“什么时间做了什么、产生了什么结果”，用于日常追踪、周报、复盘和计划校准。它不保存完整聊天或工具运行日志，避免制造无价值噪声。
 
@@ -172,7 +179,7 @@ Wiki 只保存整理后的项目知识和必要引用，不复制整封邮件、
 | `deliverables/current/` | 当前正在编写、评审或使用的交付物 | 是 |
 | `deliverables/final/` | 已批准且仍需保留的正式终稿 | 是 |
 | `deliverables/.render/` | Office 文件视觉检查产生的临时图片或预览 | 否 |
-| `deliverables/index.json` | 交付物 ID、版本、状态、受众、用途、时间、验收和替代关系的事实源 | 是 |
+| `deliverables/index.json` | 交付物 ID、版本、状态、受众、用途、批准文件哈希、时间、验收和替代关系的事实源 | 是 |
 | `deliverables/index.md` | 给人阅读的交付物状态表 | 是；自动生成 |
 
 标准状态为：
@@ -187,11 +194,12 @@ requested → drafting → review → approved → delivered → accepted
 
 | 路径 | 作用 |
 |---|---|
-| `governance/rules.md` | 当前已经生效的 Harness 项目规则 |
+| `governance/rules.json` | 已批准项目规则的结构化事实源、评价指标关联和复查时间 |
+| `governance/rules.md` | 当前生效项目规则的自动生成视图，不包含内置安全护栏 |
 | `governance/proposals.json` | 有证据支持但尚未决定的规则改进提案 |
-| `governance/change-log.json` | 规则批准、生效、修订和退役记录 |
+| `governance/change-log.json` | `CHG-###` 受控变更与幂等操作记录，保存 before/after 摘要及哈希、批准人和生效时间 |
 
-一次错误只会形成 `OBS-###` 观察。同类问题重复出现，或复盘明确指出流程缺陷后，才生成 `RULE-###` 提案。每项提案必须说明证据、适用范围、收益、副作用、评价指标和复查时间。
+一次错误只会形成 `OBS-###` 观察。同类开放问题达到阈值，或复盘明确指出流程缺陷后，统一维护流程才生成一份去重的 `RULE-###` 提案。每项提案必须说明证据、适用范围、收益、副作用、评价指标和复查时间。
 
 规则不会自动生效。只有你明确批准后，ChatGPT 才会更新有效规则，并在后续复查它是否应该保留、收窄、修订或退役。
 
@@ -214,9 +222,10 @@ requested → drafting → review → approved → delivered → accepted
 | `project-plan.md` | 项目阶段、里程碑、依赖和治理计划 |
 | `prd.md` | 产品或项目需求文档 |
 | `deliverable-brief.md` | 制作正式交付物前明确目的、受众和验收方式 |
+| `project-email.md` | 项目通知、请求、跟进、升级和交付邮件 |
 | `status-report.md` | 周报、阶段状态或管理层汇报 |
 | `executive-brief.md` | 面向管理层的精简决策材料 |
-| `meeting-notes.md` | 会议讨论、决定、行动项和待确认问题 |
+| `meeting-notes.md` | 会议讨论、决定、行动项、项目影响和后续同步清单 |
 | `decision-record.md` | 记录选项、依据、批准人和决定结果 |
 | `change-request.md` | 范围、需求、时间或验收变化的 before/after 和影响分析 |
 | `risk-register.md` | 风险、概率、影响、责任人和应对措施 |
@@ -228,7 +237,7 @@ requested → drafting → review → approved → delivered → accepted
 
 模板是内容脚手架，不要求机械填满所有字段。ChatGPT 会根据实际受众和用途进行调整。
 
-## `skills/` 与 `.agents/skills`：场景化工作能力
+## `.agents/skills/`：场景化工作能力
 
 | Skill | 触发场景 |
 |---|---|
@@ -239,12 +248,13 @@ requested → drafting → review → approved → delivered → accepted
 | `pm-knowledge` | 回答项目问题或整理 Wiki 知识 |
 | `pm-requirements` | 编写、完善或变更需求和验收标准 |
 | `pm-planning` | 创建或调整计划、里程碑、依赖和时间预测 |
-| `pm-status` | 记录进展、会议、行动、决定、风险和状态报告 |
+| `pm-status` | 编写会议纪要，并将已确认内容同步到需求、排期、风险、决定和状态 |
+| `pm-communication` | 起草或改写简练、自然且不丢事实的项目邮件和汇报 |
 | `pm-deliverable` | 创建、评审、版本化和整理正式交付物 |
 | `pm-review` | 评审交付成果、执行验收或开展复盘 |
 | `pm-maintain` | 重建索引、检查数据一致性、整理记忆并提出规则改进 |
 
-`skills/` 保存实际 Skill 内容；`.agents/skills` 是 ChatGPT 用于发现这些 Skills 的入口。两者不是两份需要分别维护的副本。
+`.agents/skills/` 直接保存实际 Skill 内容，不使用软链接，也没有需要同步维护的根 `skills/` 副本。复制目录、下载压缩包或在 Windows 上使用时都能保持一致。
 
 ## `.harness/`：后台自动维护能力
 
@@ -254,22 +264,45 @@ requested → drafting → review → approved → delivered → accepted
 |---|---|
 | `.harness/config.json` | 时区、近期窗口、任务陈旧阈值、重复观察阈值和归档目录等配置 |
 | `.harness/references/` | 来源摄取、计划、变更、交付、Git 和规则演进的详细政策 |
-| `.harness/schemas/workspace.schema.json` | 主要结构化记录的数据契约 |
-| `.harness/lib/core.mjs` | 甘特图、索引、日报、来源归档和一致性检查的核心实现 |
+| `.harness/lib/core.mjs` | 稳定公共 API 门面；CLI 和测试只需从这里导入 |
+| `.harness/lib/workspace.mjs` | 工作区数据文件、集合映射和受控字段定义 |
+| `.harness/lib/model.mjs` | v2 状态、字段、日期、ID、引用、状态转换和摘要哈希的唯一可执行契约 |
+| `.harness/lib/contracts.mjs` | 统一写入信封、类型化 payload、嵌套记录和工作流步骤的封闭字段契约 |
+| `.harness/lib/helpers.mjs` | 日期、路径、哈希、数组和记录处理等无状态公共函数 |
+| `.harness/lib/approval.mjs` | 审批范围校验、用户确认和受控变更日志 |
+| `.harness/lib/operations.mjs` | 类型化 `record`、精确变更绑定和轻量原子工作流 |
+| `.harness/lib/content-operations.mjs` | 收件箱、交付物、Wiki、观察和规则等内容域写入 |
+| `.harness/lib/compat.mjs` | 初始化、来源和活动旧入口的兼容包装 |
+| `.harness/lib/workflow.mjs` | 会议纪要等多实体操作的单层编排与事务结果聚合 |
+| `.harness/lib/transaction.mjs` | 跨文件 staging、统一提交、失败回滚和写锁 |
+| `.harness/lib/views.mjs` | 甘特图、活动、知识、交付物和规则生成视图 |
+| `.harness/lib/lint.mjs` | 数据、生命周期、文件、Git 和模块边界的只读检查 |
+| `.harness/lib/environment.mjs` | Skills、记忆、Git、软链接、文件大小和模块规模环境审计 |
+| `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
+| `.harness/lib/migration.mjs` | 经影响预览和确认后执行 v1→v2 事务迁移 |
+| `.harness/lib/maintain.mjs` | 单次安全重建、完整检查、规则候选与到期复查 |
 | `.harness/scripts/harness.mjs` | ChatGPT 调用后台能力的统一入口 |
 | `.harness/tmp/` | ChatGPT 执行本地维护时使用的临时输入 |
 | `.harness/cache/` | 可重新生成的缓存 |
 | `.harness/backups/` | 不进入 Git 的临时恢复材料 |
 
-ChatGPT 会在重要工作完成后自动重建 `project/gantt.md`、`knowledge/index.md` 和 `deliverables/index.md`，随后检查日期、状态、重复 ID、失效引用、任务依赖、完成证据、交付生命周期、归档哈希、规则提案、生成文件漂移和 Git 跟踪范围。
+ChatGPT 会在重要工作完成后自动重建甘特图、活动、知识、交付物和规则视图，随后检查日期、状态、重复 ID、失效引用、审批范围、基线摘要、任务依赖、完成证据、交付生命周期、Wiki 生命周期、归档哈希、规则提案、生成文件漂移和 Git 跟踪范围。
+
+`.harness/` 中每个 MJS 模块最多 500 行，这一边界由本地 lint 和测试机械检查。新增职责应进入范围清晰的小模块，`core.mjs` 只维护稳定导出，不重新堆积实现。
+
+内部写入使用统一信封：`schema_version`、稳定 `operation_id`、`type`、`actor`、`reason`、`source_ids`、可选 `approval` 和类型化 `payload`。信封、payload 和事实记录都是封闭字段契约，拼写错误和未知字段在写入前被拒绝。输入与当前状态先通过同一契约校验，再进入临时事务目录；所有目标都准备成功后才统一替换。重复 `operation_id` 返回第一次记录的结果，不重复分配 ID 或生成活动；重复来源也会保留一次去重操作审计。
+
+确认会议纪要等跨实体同步使用轻量 `workflow.apply`：把需求、预测/实际、风险、决定、收件箱和活动等普通类型化操作放入一次事务，任一步失败整体回滚。它不是通用编排平台，也不会代替受控变更审批；已批准基线的新增、修改和删除均需逐目标精确 before/after 的变更请求。
+
+v1 工作区迁移采用两阶段确认：先返回文件与数据影响、待确认基线/权限/受控记录数量和 `preview_digest`，用户确认后才执行一次事务迁移。旧值会完整保留，但旧基线标为 `needs_confirmation`；无法满足 v2 结构化证据的批准状态和审批范围保存在 `legacy_approval*` 中并暂不生效，不会伪造历史批准。
 
 ## `tests/` 和根目录配置
 
 | 路径 | 作用 |
 |---|---|
-| `tests/core.test.mjs` | 覆盖甘特图、日常引导、来源归档、去重、交付状态、规则候选、Git 策略和引用校验的回归测试 |
+| `tests/core.test.mjs` | 覆盖契约、事务回滚、幂等、审批、基线、来源、活动、交付、Wiki、规则、迁移、Git 和端到端流程 |
 | `.gitignore` | 排除原始归档、渲染文件、缓存、临时文件、依赖目录和凭证文件 |
-| `.gitattributes` | 将 DOCX、XLSX、PPTX、PDF 和常见图片标记为二进制 |
+| `.gitattributes` | 强制 Markdown/JSON/MJS 使用 LF，并将 Office、PDF 和图片标记为二进制 |
 | `package.json` | 声明后台工具环境和自动检查入口；无需项目经理操作 |
 | `AGENTS.md` | ChatGPT 每次进入项目时遵循的总工作契约和批准边界 |
 
@@ -307,7 +340,7 @@ ChatGPT 可以自动执行低风险的本地整理，例如登记来源、添加
 
 ### 每天开始工作时
 
-ChatGPT 会结合当前计划、逾期和阻塞任务、近期里程碑、风险、待决变更、未处理来源及待交付事项，给出不超过三个首要行动。
+ChatGPT 会结合近期活动、当前计划、逾期和阻塞任务、依赖、近期里程碑、风险、待决审批、未处理来源、待交付事项及 Wiki/规则复查，给出不超过三个带原因的首要行动。
 
 ### 收到新信息时
 

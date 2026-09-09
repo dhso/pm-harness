@@ -1,10 +1,15 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "default_timezone": "Asia/Hong_Kong",
   "upcoming_days": 7,
+  "recent_activity_days": 7,
   "stale_task_days": 7,
   "large_tracked_file_mb": 25,
   "repeat_observation_threshold": 2,
+  "rule_review_days": 30,
+  "memory_current_max_bytes": 4096,
+  "memory_current_stale_days": 14,
+  "verify_archive_hash_on_lint": true,
   "archive_roots": [
     "archive/files",
     "deliverables/.render",
@@ -13,4 +18,3 @@
     ".harness/backups"
   ]
 }
-

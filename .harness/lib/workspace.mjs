@@ -1,0 +1,66 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+export const STORE_FILES = Object.freeze({
+  config: ".harness/config.json",
+  project: "project/project.json",
+  stakeholders: "project/stakeholders.json",
+  schedule: "project/schedule.json",
+  requirements: "project/requirements.json",
+  registers: "project/registers.json",
+  sources: "knowledge/sources.json",
+  inbox: "knowledge/inbox.json",
+  catalog: "knowledge/catalog.json",
+  observations: "memory/observations.json",
+  activity: "activity/log.json",
+  deliverables: "deliverables/index.json",
+  proposals: "governance/proposals.json",
+  rules: "governance/rules.json",
+  changes: "governance/change-log.json",
+  archive: "archive/index.json",
+});
+
+export const COLLECTIONS = Object.freeze([
+  ["stakeholders", "stakeholders", "stakeholder"],
+  ["schedule", "milestones", "milestone"],
+  ["schedule", "tasks", "task"],
+  ["requirements", "requirements", "requirement"],
+  ["requirements", "change_requests", "change_request"],
+  ["registers", "risks", "risk"],
+  ["registers", "issues", "issue"],
+  ["registers", "decisions", "decision"],
+  ["sources", "sources", "source"],
+  ["inbox", "items", "inbox"],
+  ["catalog", "pages", "wiki"],
+  ["observations", "observations", "observation"],
+  ["activity", "entries", "activity"],
+  ["deliverables", "deliverables", "deliverable"],
+  ["proposals", "proposals", "proposal"],
+  ["rules", "rules", "rule"],
+  ["changes", "changes", "change"],
+  ["archive", "files", "archive"],
+]);
+
+export const REQUIREMENT_IMMUTABLE_FIELDS = Object.freeze(["title", "description", "acceptance_criteria"]);
+export const REQUIREMENT_LINK_FIELDS = Object.freeze(["source_ids", "supersedes_id", "superseded_by_id"]);
+export const DELIVERABLE_IMMUTABLE_FIELDS = Object.freeze(["title", "type", "format", "version", "path", "content_sha256", "audience", "purpose", "requirement_ids", "source_ids", "due_at", "acceptance_criteria", "reviewers"]);
+export const DELIVERABLE_CONTROLLED_FIELDS = Object.freeze([...DELIVERABLE_IMMUTABLE_FIELDS, "supersedes_id", "superseded_by_id"]);
+export const DECISION_CONTROLLED_FIELDS = Object.freeze(["title", "description", "rationale", "source_ids", "superseded_by_id"]);
+
+export async function readJson(root, relativePath) {
+  return JSON.parse(await readFile(path.join(root, relativePath), "utf8"));
+}
+
+export async function readWorkspace(root) {
+  const entries = await Promise.all(Object.entries(STORE_FILES).map(async ([key, relative]) => [key, await readJson(root, relative)]));
+  return Object.fromEntries(entries);
+}
+
+export async function readOptionalJson(root, relativePath, fallback) {
+  try {
+    return await readJson(root, relativePath);
+  } catch (error) {
+    if (error.code === "ENOENT") return structuredClone(fallback);
+    throw error;
+  }
+}

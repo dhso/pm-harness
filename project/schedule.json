@@ -1,6 +1,13 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "baseline": {
+    "revision": 0,
+    "status": "draft",
+    "digest": "65d59420d4d4bcf58dde8d534144b234791a4871ebed26825a1209f55de83e42",
+    "approved_by_id": null,
+    "approved_at": null,
+    "change_request_id": null
+  },
   "milestones": [],
   "tasks": []
 }
-

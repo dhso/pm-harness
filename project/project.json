@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "initialized": false,
   "id": "",
   "name": "",
@@ -10,8 +10,6 @@
   "scope_out": [],
   "success_criteria": [],
   "constraints": [],
-  "stakeholders": [],
   "created_at": null,
   "updated_at": null
 }
-

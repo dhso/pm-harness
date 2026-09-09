@@ -7,6 +7,9 @@ import {
   buildDailyBrief,
   initializeProject,
   lintWorkspace,
+  maintainWorkspace,
+  migrateWorkspaceV1ToV2,
+  recordOperation,
   rebuildWorkspace,
   registerSource,
   sha256File,
@@ -47,6 +50,12 @@ try {
     if (!result.ok) process.exitCode = 1;
   } else if (command === "brief") {
     print(await buildDailyBrief(root));
+  } else if (command === "record") {
+    print(await recordOperation(root, await loadInput()));
+  } else if (command === "maintain") {
+    print(await maintainWorkspace(root));
+  } else if (command === "migrate") {
+    print(await migrateWorkspaceV1ToV2(root, await loadInput()));
   } else if (command === "init") {
     print(await initializeProject(root, await loadInput()));
   } else if (command === "source-add") {
@@ -58,10 +67,15 @@ try {
     if (!target) throw new Error("hash requires a file path");
     print({ path: target, sha256: await sha256File(path.resolve(root, target)) });
   } else {
-    throw new Error("Usage: harness.mjs <rebuild|lint|brief|init|source-add|activity-add|hash> [--input file] [--json]");
+    throw new Error("Usage: harness.mjs <record|maintain|migrate|rebuild|lint|brief|init|source-add|activity-add|hash> [--input file] [--json]");
   }
 } catch (error) {
-  print({ ok: false, error: error.message });
+  let details;
+  try {
+    details = JSON.parse(error.message);
+  } catch {
+    details = { code: "operation_failed", message: error.message };
+  }
+  print({ ok: false, error: details, suggestion: details.fix || "Review the structured error and correct the input or obtain the required approval; do not retry unchanged input repeatedly" });
   process.exitCode = 1;
 }
-
