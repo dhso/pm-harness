@@ -8,7 +8,6 @@ import {
   initializeProject,
   lintWorkspace,
   maintainWorkspace,
-  migrateWorkspaceV1ToV2,
   recordOperation,
   rebuildWorkspace,
   registerSource,
@@ -54,8 +53,6 @@ try {
     print(await recordOperation(root, await loadInput()));
   } else if (command === "maintain") {
     print(await maintainWorkspace(root));
-  } else if (command === "migrate") {
-    print(await migrateWorkspaceV1ToV2(root, await loadInput()));
   } else if (command === "init") {
     print(await initializeProject(root, await loadInput()));
   } else if (command === "source-add") {
@@ -67,7 +64,7 @@ try {
     if (!target) throw new Error("hash requires a file path");
     print({ path: target, sha256: await sha256File(path.resolve(root, target)) });
   } else {
-    throw new Error("Usage: harness.mjs <record|maintain|migrate|rebuild|lint|brief|init|source-add|activity-add|hash> [--input file] [--json]");
+    throw new Error("Usage: harness.mjs <record|maintain|rebuild|lint|brief|init|source-add|activity-add|hash> [--input file] [--json]");
   }
 } catch (error) {
   let details;

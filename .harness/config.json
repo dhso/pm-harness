@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "default_timezone": "Asia/Hong_Kong",
   "upcoming_days": 7,
   "recent_activity_days": 7,

@@ -12,7 +12,7 @@ node .harness/scripts/harness.mjs record --input .harness/tmp/operation.json
 
 统一信封包含：
 
-- `schema_version: 2`
+- `schema_version: 1`
 - 稳定且可重放的 `operation_id`
 - `type`
 - `actor: { "kind": "user | agent | stakeholder" }`
@@ -54,13 +54,3 @@ node .harness/scripts/harness.mjs maintain
 - `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
 - `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和 Git 范围。
 - `maintain` 最多执行一次安全重建、一次完整检查、规则候选去重和到期规则复查，不启动后台循环。
-
-## v1 → v2 迁移
-
-第一次调用只返回影响和 `preview_digest`：
-
-```text
-node .harness/scripts/harness.mjs migrate --input .harness/tmp/migrate-preview.json
-```
-
-向用户展示影响后，再以 `confirmed: true` 和完全相同的 `preview_digest` 调用。迁移整体事务提交；旧基线日期标为 `needs_confirmation`。v1 中无法满足结构化权限的批准状态保留到 `legacy_approval`，但降回待批准阶段；旧干系人权限保留到 `legacy_approval_scopes` 且不激活。已是 v2 时安全返回 `already_migrated`。

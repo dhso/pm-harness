@@ -9,7 +9,6 @@ import {
   buildDailyBrief,
   lintWorkspace,
   maintainWorkspace,
-  migrateWorkspaceV1ToV2,
   readJson,
   rebuildWorkspace,
   recordOperation,
@@ -23,7 +22,7 @@ const copiedDirectories = [".harness", ".agents", "project", "knowledge", "memor
 const copiedFiles = ["AGENTS.md", ".gitignore", ".gitattributes", "package.json"];
 
 async function workspace() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pm-harness-v2-test-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "pm-harness-test-"));
   for (const item of copiedDirectories) await cp(path.join(repositoryRoot, item), path.join(root, item), { recursive: true });
   for (const item of copiedFiles) await cp(path.join(repositoryRoot, item), path.join(root, item));
   return root;
@@ -84,42 +83,15 @@ function businessApproval(stakeholderId, extra = {}) {
   };
 }
 
-async function convertTemplateToV1(root) {
-  const paths = [
-    ".harness/config.json",
-    "project/project.json",
-    "project/stakeholders.json",
-    "project/schedule.json",
-    "project/requirements.json",
-    "project/registers.json",
-    "knowledge/sources.json",
-    "knowledge/inbox.json",
-    "knowledge/catalog.json",
-    "memory/observations.json",
-    "activity/log.json",
-    "deliverables/index.json",
-    "governance/proposals.json",
-    "governance/rules.json",
-    "governance/change-log.json",
-    "archive/index.json",
-  ];
-  for (const relative of paths) {
-    const value = await readJson(root, relative);
-    value.schema_version = 1;
-    if (relative === "project/schedule.json") delete value.baseline;
-    if (relative === "governance/change-log.json") delete value.operations;
-    await writeJsonFixture(root, relative, value);
-  }
-}
-
-test("base v2 template rebuilds, passes lint, uses LF, and has real Skills", async () => {
+test("base template rebuilds, passes lint, uses LF, and has real Skills", async () => {
   const root = await workspace();
+  assert.equal(SCHEMA_VERSION, 1);
   await rebuildWorkspace(root);
   const result = await lintWorkspace(root);
   assert.equal(result.ok, true, JSON.stringify(result.issues, null, 2));
   assert.deepEqual(result.counts, { error: 0, warning: 0, info: 0 });
   assert.equal((await lstat(path.join(root, ".agents/skills"))).isSymbolicLink(), false);
-  assert.equal((await readJson(root, "activity/log.json")).schema_version, 2);
+  assert.equal((await readJson(root, "activity/log.json")).schema_version, SCHEMA_VERSION);
   for (const relative of ["AGENTS.md", ".harness/lib/core.mjs", "project/schedule.json"]) assert.ok(!(await readFile(path.join(root, relative), "utf8")).includes("\r\n"));
 });
 
@@ -365,7 +337,7 @@ test("deliverable transitions enforce authority, chronology, immutable approved 
   await writeJsonFixture(root, "deliverables/index.json", index);
   assert.ok((await lintWorkspace(root)).issues.some((item) => item.code === "lifecycle_time_order"));
 
-  await writeJsonFixture(root, "deliverables/index.json", { schema_version: 2, deliverables: [
+  await writeJsonFixture(root, "deliverables/index.json", { schema_version: SCHEMA_VERSION, deliverables: [
     { id: "DEL-001", title: "A", type: "doc", format: "md", version: "v01", status: "requested", path: null, audience: "Team", purpose: "Test", requirement_ids: [], source_ids: [], acceptance_criteria: [], reviewers: [], supersedes_id: "DEL-002", superseded_by_id: "DEL-002" },
     { id: "DEL-002", title: "B", type: "doc", format: "md", version: "v02", status: "requested", path: null, audience: "Team", purpose: "Test", requirement_ids: [], source_ids: [], acceptance_criteria: [], reviewers: [], supersedes_id: "DEL-001", superseded_by_id: "DEL-001" },
   ] });
@@ -454,55 +426,12 @@ test("repeated observations create one proposal, never auto-activate, and produc
 test("maintain stops before rule changes when the workspace has errors", async () => {
   const root = await workspace();
   const config = await readJson(root, ".harness/config.json");
-  config.schema_version = 1;
+  config.schema_version = 999;
   await writeJsonFixture(root, ".harness/config.json", config);
   const result = await maintainWorkspace(root);
   assert.equal(result.ok, false);
   assert.equal(result.stopped_before_changes, true);
   assert.equal((await readJson(root, "governance/proposals.json")).proposals.length, 0);
-});
-
-test("empty v1 template migrates only after matching preview confirmation", async () => {
-  const root = await workspace();
-  await convertTemplateToV1(root);
-  const before = await readFile(path.join(root, "project/schedule.json"), "utf8");
-  const preview = await migrateWorkspaceV1ToV2(root, {});
-  assert.equal(preview.requires_confirmation, true);
-  assert.equal(await readFile(path.join(root, "project/schedule.json"), "utf8"), before);
-  const wrong = await migrateWorkspaceV1ToV2(root, { confirmed: true, preview_digest: "wrong" });
-  assert.equal(wrong.requires_confirmation, true);
-  const migrated = await migrateWorkspaceV1ToV2(root, { confirmed: true, preview_digest: preview.preview_digest });
-  assert.equal(migrated.migrated, true);
-  assert.equal((await readJson(root, "project/schedule.json")).baseline.status, "draft");
-  assert.equal((await lintWorkspace(root)).ok, true);
-});
-
-test("populated v1 data migrates without losing stakeholders, baseline dates, Wiki, or activity", async () => {
-  const root = await workspace();
-  await convertTemplateToV1(root);
-  const project = await readJson(root, "project/project.json");
-  project.stakeholders = ["Alice", { name: "Bob", role: "Sponsor", approval_scopes: ["requirement"] }];
-  await writeJsonFixture(root, "project/project.json", project);
-  await writeJsonFixture(root, "project/schedule.json", { schema_version: 1, milestones: [], tasks: [{ id: "TASK-001", title: "Legacy task", status: "in_progress", baseline_start: "2026-09-01", baseline_end: "2026-09-10" }] });
-  await writeJsonFixture(root, "project/requirements.json", { schema_version: 1, requirements: [{ id: "REQ-001", title: "Legacy approved", description: "Preserve this", status: "approved", acceptance_criteria: ["Preserved"], source_ids: [] }], change_requests: [] });
-  await mkdir(path.join(root, "knowledge/wiki"), { recursive: true });
-  await writeFile(path.join(root, "knowledge/wiki/legacy.md"), "# Legacy knowledge\n\nPreserved.\n", "utf8");
-  await writeFile(path.join(root, "activity/2026-09-09.md"), "# 2026-09-09 活动记录\n\n- 2026-09-09T09:00:00+08:00\n  - 完成：Legacy action\n  - 关联：TASK-001\n  - 结果：Done\n  - 证据：—\n  - 下一步：Continue\n", "utf8");
-  const preview = await migrateWorkspaceV1ToV2(root, {});
-  await migrateWorkspaceV1ToV2(root, { confirmed: true, preview_digest: preview.preview_digest });
-  const migratedStakeholders = (await readJson(root, "project/stakeholders.json")).stakeholders;
-  assert.equal(migratedStakeholders[0].name, "Alice");
-  assert.deepEqual(migratedStakeholders[1].approval_scopes, []);
-  assert.deepEqual(migratedStakeholders[1].legacy_approval_scopes, ["requirement"]);
-  const schedule = await readJson(root, "project/schedule.json");
-  assert.equal(schedule.tasks[0].baseline_end, "2026-09-10");
-  assert.equal(schedule.baseline.status, "needs_confirmation");
-  assert.equal((await readJson(root, "knowledge/catalog.json")).pages[0].title, "Legacy knowledge");
-  assert.equal((await readJson(root, "activity/log.json")).entries[0].action, "Legacy action");
-  const migratedRequirement = (await readJson(root, "project/requirements.json")).requirements[0];
-  assert.equal(migratedRequirement.status, "proposed");
-  assert.equal(migratedRequirement.legacy_approval.status, "approved");
-  assert.equal((await lintWorkspace(root)).counts.error, 0);
 });
 
 test("Git keeps the necessary set, excludes raw archives, and flags forced archives or credentials", async () => {
@@ -545,7 +474,7 @@ test("agent-only CLI exposes record, brief, maintain, and structured errors", as
   assert.ok(failed.suggestion);
 });
 
-test("complete v2 workflow covers intake, change approval, planning, activity, delivery draft, Wiki, brief, maintain, and lint", async () => {
+test("complete workflow covers intake, change approval, planning, activity, delivery draft, Wiki, brief, maintain, and lint", async () => {
   const root = await workspace();
   await initialize(root, "End-to-end");
   const approver = (await stakeholder(root, ["schedule_baseline", "requirement", "deliverable", "acceptance"])).stakeholder;

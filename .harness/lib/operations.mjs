@@ -223,7 +223,7 @@ export async function recordOperation(root, input, options = {}) {
     const after = baselineDigest(data.schedule);
     const revision = Number(data.schedule.baseline?.revision || 0) + 1;
     data.schedule.baseline = { revision, status: "approved", digest: after, approved_by_id: approval.stakeholder.id, approved_at: envelope.approval.approved_at, change_request_id: envelope.approval.change_request_id || null };
-    addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: [...data.schedule.milestones, ...data.schedule.tasks].map((item) => item.id), before: snapshot, after: snapshot, before_summary: "确认迁移或草拟基线", after_summary: "基线已批准", baseline_revision: revision });
+    addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: [...data.schedule.milestones, ...data.schedule.tasks].map((item) => item.id), before: snapshot, after: snapshot, before_summary: "确认草拟基线", after_summary: "基线已批准", baseline_revision: revision });
     changedStores.add("schedule");
     changedStores.add("changes");
     resultIds.push(...[...data.schedule.milestones, ...data.schedule.tasks].map((item) => item.id));

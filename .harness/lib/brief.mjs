@@ -30,15 +30,6 @@ export async function buildDailyBrief(root, now = new Date()) {
     ...(data.registers.decisions || []).filter((item) => item.status === "proposed").map((item) => ({ kind: "decision", ...item })),
     ...(data.deliverables.deliverables || []).filter((item) => item.status === "review").map((item) => ({ kind: "deliverable", ...item })),
     ...(data.proposals.proposals || []).filter((item) => item.status === "proposed").map((item) => ({ kind: "rule", ...item })),
-    ...(data.schedule.baseline?.status === "needs_confirmation" ? [{ kind: "schedule_baseline", id: "schedule-baseline", title: "迁移后的时间基线" }] : []),
-    ...(data.stakeholders.stakeholders || []).filter((item) => item.legacy_approval_scopes?.length).map((item) => ({ kind: "legacy_stakeholder_scope", ...item, title: `${item.name} 的旧审批范围` })),
-    ...[
-      ...(data.requirements.requirements || []),
-      ...(data.requirements.change_requests || []),
-      ...(data.registers.decisions || []),
-      ...(data.deliverables.deliverables || []),
-      ...(data.proposals.proposals || []),
-    ].filter((item) => item.legacy_approval).map((item) => ({ kind: "legacy_approval", ...item })),
   ];
   const inbox = (data.inbox.items || []).filter((item) => ["new", "needs_confirmation"].includes(item.status));
   const commitments = inbox.filter((item) => item.classification === "commitment");

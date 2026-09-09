@@ -128,7 +128,7 @@ export async function collectIssues(root, data, options = {}) {
   const exists = (relative) => pendingPaths.has(relative.split(path.sep).join("/")) || existsSync(path.join(root, relative));
   for (const [key, relative] of Object.entries(STORE_FILES)) {
     if (!isPlainObject(data[key])) addIssue(issues, "error", "invalid_store", relative, "Top-level store must be an object");
-    else if (data[key].schema_version !== SCHEMA_VERSION) addIssue(issues, "error", "schema_version", relative, `schema_version must be ${SCHEMA_VERSION}`, "Run the approved v1-to-v2 migration before other writes");
+    else if (data[key].schema_version !== SCHEMA_VERSION) addIssue(issues, "error", "schema_version", relative, `schema_version must be ${SCHEMA_VERSION}`, "Update the file to the current workspace contract before other writes");
   }
   if (issues.some((issue) => issue.code === "invalid_store")) return issues;
   for (const issue of validateWorkspaceContract(data)) addIssue(issues, "error", issue.code, issue.path, issue.message);
@@ -165,10 +165,7 @@ export async function collectIssues(root, data, options = {}) {
   const ruleIds = ids("rule");
   const changeRequestIds = ids("change_request");
 
-  for (const stakeholder of byKind.stakeholder || []) {
-    validateRefs(issues, stakeholder, "source_ids", sourceIds, STORE_FILES.stakeholders);
-    if (stakeholder.legacy_approval_scopes?.length) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.stakeholders, `${stakeholder.id} has v1 approval scopes that are not active until the user reconfirms them`);
-  }
+  for (const stakeholder of byKind.stakeholder || []) validateRefs(issues, stakeholder, "source_ids", sourceIds, STORE_FILES.stakeholders);
   for (const record of [...(byKind.milestone || []), ...(byKind.task || [])]) {
     validateDatePair(issues, record, "baseline_start", "baseline_end", STORE_FILES.schedule);
     validateDatePair(issues, record, "forecast_start", "forecast_end", STORE_FILES.schedule);
@@ -191,7 +188,7 @@ export async function collectIssues(root, data, options = {}) {
 
   const currentBaselineDigest = baselineDigest(data.schedule);
   const baseline = data.schedule.baseline;
-  if (!isPlainObject(baseline) || !Number.isInteger(baseline.revision) || !["draft", "needs_confirmation", "approved"].includes(baseline.status) || baseline.digest !== currentBaselineDigest) {
+  if (!isPlainObject(baseline) || !Number.isInteger(baseline.revision) || !["draft", "approved"].includes(baseline.status) || baseline.digest !== currentBaselineDigest) {
     addIssue(issues, "error", "baseline_metadata_invalid", STORE_FILES.schedule, "Baseline revision, status, or digest does not match current baseline fields");
   } else if (baseline.status === "approved") {
     const approvals = (byKind.change || []).filter((item) => item.kind === "schedule_baseline" && item.baseline_revision === baseline.revision);
@@ -215,7 +212,6 @@ export async function collectIssues(root, data, options = {}) {
   }
 
   for (const item of byKind.requirement || []) {
-    if (item.legacy_approval) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.requirements, `${item.id} preserves a v1 controlled status that needs v2 approval confirmation`);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.requirements);
     if (["approved", "implemented", "validated"].includes(item.status) && (!canApprove(item.approved_by_id, "requirement") || !item.approved_at)) addIssue(issues, "error", "requirement_approval_missing", STORE_FILES.requirements, `${item.id} is ${item.status} without an active approver in requirement scope and approval time`);
     if (["approved", "implemented", "validated"].includes(item.status)) {
@@ -228,7 +224,6 @@ export async function collectIssues(root, data, options = {}) {
     if (item.superseded_by_id && (byKind.requirement || []).find((candidate) => candidate.id === item.superseded_by_id)?.supersedes_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.requirements, `${item.id} replacement link is not reciprocal`);
   }
   for (const item of byKind.change_request || []) {
-    if (item.legacy_approval) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.requirements, `${item.id} preserves a v1 approval that needs v2 confirmation`);
     validateRefs(issues, item, "target_ids", allIds, STORE_FILES.requirements);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.requirements);
     const changeItemIds = new Set((item.change_items || []).map((change) => change.target_id));
@@ -241,7 +236,6 @@ export async function collectIssues(root, data, options = {}) {
 
   for (const kind of ["risk", "issue", "decision"]) {
     for (const item of byKind[kind] || []) {
-      if (item.legacy_approval) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.registers, `${item.id} preserves a v1 approval that needs v2 confirmation`);
       validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.registers);
       if (["resolved", "closed"].includes(item.status) && !item.resolution) addIssue(issues, "warning", "resolution_missing", STORE_FILES.registers, `${item.id} is closed without a resolution`);
       if (kind === "decision" && item.status === "approved" && (!canApprove(item.approved_by_id, "decision") || !item.approved_at)) addIssue(issues, "error", "decision_approval_missing", STORE_FILES.registers, `${item.id} is approved without an active approver in decision scope`);
@@ -258,7 +252,6 @@ export async function collectIssues(root, data, options = {}) {
   }
 
   for (const item of byKind.deliverable || []) {
-    if (item.legacy_approval) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.deliverables, `${item.id} preserves a v1 delivery state that needs v2 confirmation`);
     validateRefs(issues, item, "requirement_ids", requirementIds, STORE_FILES.deliverables);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.deliverables);
     if (item.path && !isWorkspaceRelativePath(root, item.path)) addIssue(issues, "error", "invalid_deliverable_path", STORE_FILES.deliverables, `${item.id} path escapes the workspace: ${item.path}`);
@@ -329,7 +322,6 @@ export async function collectIssues(root, data, options = {}) {
   }
   for (const [pattern, items] of groups) if (items.length >= Number(data.config.repeat_observation_threshold || 2)) addIssue(issues, "info", "rule_candidate", STORE_FILES.observations, `${items.length} observations share pattern '${pattern}'`);
   for (const item of byKind.proposal || []) {
-    if (item.legacy_approval) addIssue(issues, "warning", "legacy_approval_needs_confirmation", STORE_FILES.proposals, `${item.id} preserves a v1 rule state that needs explicit user approval`);
     validateRefs(issues, item, "observation_ids", observationIds, STORE_FILES.proposals);
     if (!item.observation_ids.length && !item.manual_reason) addIssue(issues, "error", "rule_evidence_missing", STORE_FILES.proposals, `${item.id} has neither observations nor a manual reason`);
     for (const observationId of item.observation_ids) {
@@ -351,7 +343,7 @@ export async function collectIssues(root, data, options = {}) {
     validateRefs(issues, item, "target_ids", allIds, STORE_FILES.changes);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.changes);
     if (item.change_request_id && !changeRequestIds.has(item.change_request_id)) addIssue(issues, "error", "change_request_missing", STORE_FILES.changes, `${item.id} references missing change request ${item.change_request_id}`);
-    if (!["user", "legacy-unverified"].includes(item.approved_by) && !stakeholderIds.has(item.approved_by)) addIssue(issues, "error", "change_approver_missing", STORE_FILES.changes, `${item.id} references missing approver ${item.approved_by}`);
+    if (item.approved_by !== "user" && !stakeholderIds.has(item.approved_by)) addIssue(issues, "error", "change_approver_missing", STORE_FILES.changes, `${item.id} references missing approver ${item.approved_by}`);
   }
 
   for (const item of byKind.archive || []) {

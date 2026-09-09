@@ -11,7 +11,6 @@ export {
 } from "./views.mjs";
 export { lintWorkspace } from "./lint.mjs";
 export { buildDailyBrief } from "./brief.mjs";
-export { migrateWorkspaceV1ToV2 } from "./migration.mjs";
 export {
   recordOperation,
 } from "./operations.mjs";

@@ -266,7 +266,7 @@ requested → drafting → review → approved → delivered → accepted
 | `.harness/references/` | 来源摄取、计划、变更、交付、Git 和规则演进的详细政策 |
 | `.harness/lib/core.mjs` | 稳定公共 API 门面；CLI 和测试只需从这里导入 |
 | `.harness/lib/workspace.mjs` | 工作区数据文件、集合映射和受控字段定义 |
-| `.harness/lib/model.mjs` | v2 状态、字段、日期、ID、引用、状态转换和摘要哈希的唯一可执行契约 |
+| `.harness/lib/model.mjs` | 状态、字段、日期、ID、引用、状态转换和摘要哈希的唯一可执行契约 |
 | `.harness/lib/contracts.mjs` | 统一写入信封、类型化 payload、嵌套记录和工作流步骤的封闭字段契约 |
 | `.harness/lib/helpers.mjs` | 日期、路径、哈希、数组和记录处理等无状态公共函数 |
 | `.harness/lib/approval.mjs` | 审批范围校验、用户确认和受控变更日志 |
@@ -279,7 +279,6 @@ requested → drafting → review → approved → delivered → accepted
 | `.harness/lib/lint.mjs` | 数据、生命周期、文件、Git 和模块边界的只读检查 |
 | `.harness/lib/environment.mjs` | Skills、记忆、Git、软链接、文件大小和模块规模环境审计 |
 | `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
-| `.harness/lib/migration.mjs` | 经影响预览和确认后执行 v1→v2 事务迁移 |
 | `.harness/lib/maintain.mjs` | 单次安全重建、完整检查、规则候选与到期复查 |
 | `.harness/scripts/harness.mjs` | ChatGPT 调用后台能力的统一入口 |
 | `.harness/tmp/` | ChatGPT 执行本地维护时使用的临时输入 |
@@ -294,13 +293,11 @@ ChatGPT 会在重要工作完成后自动重建甘特图、活动、知识、交
 
 确认会议纪要等跨实体同步使用轻量 `workflow.apply`：把需求、预测/实际、风险、决定、收件箱和活动等普通类型化操作放入一次事务，任一步失败整体回滚。它不是通用编排平台，也不会代替受控变更审批；已批准基线的新增、修改和删除均需逐目标精确 before/after 的变更请求。
 
-v1 工作区迁移采用两阶段确认：先返回文件与数据影响、待确认基线/权限/受控记录数量和 `preview_digest`，用户确认后才执行一次事务迁移。旧值会完整保留，但旧基线标为 `needs_confirmation`；无法满足 v2 结构化证据的批准状态和审批范围保存在 `legacy_approval*` 中并暂不生效，不会伪造历史批准。
-
 ## `tests/` 和根目录配置
 
 | 路径 | 作用 |
 |---|---|
-| `tests/core.test.mjs` | 覆盖契约、事务回滚、幂等、审批、基线、来源、活动、交付、Wiki、规则、迁移、Git 和端到端流程 |
+| `tests/core.test.mjs` | 覆盖契约、事务回滚、幂等、审批、基线、来源、活动、交付、Wiki、规则、Git 和端到端流程 |
 | `.gitignore` | 排除原始归档、渲染文件、缓存、临时文件、依赖目录和凭证文件 |
 | `.gitattributes` | 强制 Markdown/JSON/MJS 使用 LF，并将 Office、PDF 和图片标记为二进制 |
 | `package.json` | 声明后台工具环境和自动检查入口；无需项目经理操作 |

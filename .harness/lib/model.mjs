@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 1;
 
 export const STATUS = Object.freeze({
   project: ["uninitialized", "active", "on_hold", "completed", "cancelled"],
@@ -190,7 +190,7 @@ export const RECORD_MODELS = Object.freeze({
     id: "stakeholder",
     required: ["id", "name", "role", "status", "approval_scopes", "source_ids", "updated_at"],
     status: "stakeholder",
-    fields: { name: "string", role: "string", organization: "nullableString", status: "string", approval_scopes: "approvalScopes", legacy_approval_scopes: "stringArray", source_ids: "stringArray", updated_at: "timestamp" },
+    fields: { name: "string", role: "string", organization: "nullableString", status: "string", approval_scopes: "approvalScopes", source_ids: "stringArray", updated_at: "timestamp" },
   },
   milestone: {
     id: "milestone",
@@ -208,13 +208,13 @@ export const RECORD_MODELS = Object.freeze({
     id: "requirement",
     required: ["id", "title", "description", "status", "acceptance_criteria", "source_ids", "updated_at"],
     status: "requirement",
-    fields: { title: "string", description: "string", status: "string", acceptance_criteria: "stringArray", source_ids: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString", approved_by_id: "nullableString", approved_at: "nullableTimestamp", legacy_approval: "object", updated_at: "timestamp" },
+    fields: { title: "string", description: "string", status: "string", acceptance_criteria: "stringArray", source_ids: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString", approved_by_id: "nullableString", approved_at: "nullableTimestamp", updated_at: "timestamp" },
   },
   change_request: {
     id: "change_request",
     required: ["id", "title", "status", "approval_scope", "target_ids", "before", "after", "reason", "impact", "source_ids", "created_at"],
     status: "change_request",
-    fields: { title: "string", status: "string", approval_scope: "approvalScope", target_ids: "stringArray", change_items: "changeItems", before: "string", after: "string", reason: "string", impact: "string", source_ids: "stringArray", created_at: "timestamp", approved_by_id: "nullableString", confirmed_by_user_at: "nullableTimestamp", effective_at: "nullableTimestamp", approved_change_digest: "nullableHash", applied_target_ids: "stringArray", applied_operation_ids: "stringArray", applied_at: "nullableTimestamp", legacy_approval: "object" },
+    fields: { title: "string", status: "string", approval_scope: "approvalScope", target_ids: "stringArray", change_items: "changeItems", before: "string", after: "string", reason: "string", impact: "string", source_ids: "stringArray", created_at: "timestamp", approved_by_id: "nullableString", confirmed_by_user_at: "nullableTimestamp", effective_at: "nullableTimestamp", approved_change_digest: "nullableHash", applied_target_ids: "stringArray", applied_operation_ids: "stringArray", applied_at: "nullableTimestamp" },
   },
   risk: {
     id: "risk",
@@ -232,7 +232,7 @@ export const RECORD_MODELS = Object.freeze({
     id: "decision",
     required: ["id", "title", "description", "status", "source_ids", "updated_at"],
     status: "decision",
-    fields: { title: "string", description: "string", status: "string", rationale: "nullableString", source_ids: "stringArray", approved_by_id: "nullableString", approved_at: "nullableTimestamp", superseded_by_id: "nullableString", legacy_approval: "object", updated_at: "timestamp" },
+    fields: { title: "string", description: "string", status: "string", rationale: "nullableString", source_ids: "stringArray", approved_by_id: "nullableString", approved_at: "nullableTimestamp", superseded_by_id: "nullableString", updated_at: "timestamp" },
   },
   source: {
     id: "source",
@@ -254,7 +254,7 @@ export const RECORD_MODELS = Object.freeze({
     id: "deliverable",
     required: ["id", "title", "type", "format", "version", "status", "audience", "purpose", "requirement_ids", "source_ids"],
     status: "deliverable",
-    fields: { title: "string", type: "string", format: "string", version: "string", status: "string", path: "nullableString", content_sha256: "nullableHash", audience: "string", purpose: "string", requirement_ids: "stringArray", source_ids: "stringArray", due_at: "nullableDate", completed_at: "nullableTimestamp", approved_by_id: "nullableString", approved_at: "nullableTimestamp", delivered_at: "nullableTimestamp", accepted_by_id: "nullableString", accepted_at: "nullableTimestamp", acceptance_criteria: "stringArray", acceptance_evidence: "nullableString", reviewers: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString", legacy_approval: "object" },
+    fields: { title: "string", type: "string", format: "string", version: "string", status: "string", path: "nullableString", content_sha256: "nullableHash", audience: "string", purpose: "string", requirement_ids: "stringArray", source_ids: "stringArray", due_at: "nullableDate", completed_at: "nullableTimestamp", approved_by_id: "nullableString", approved_at: "nullableTimestamp", delivered_at: "nullableTimestamp", accepted_by_id: "nullableString", accepted_at: "nullableTimestamp", acceptance_criteria: "stringArray", acceptance_evidence: "nullableString", reviewers: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString" },
   },
   wiki: {
     id: "wiki",
@@ -272,7 +272,7 @@ export const RECORD_MODELS = Object.freeze({
     id: "proposal",
     required: ["id", "title", "status", "observation_ids", "proposed_rule", "scope", "expected_benefit", "possible_side_effects", "evaluation_metric", "review_at"],
     status: "proposal",
-    fields: { title: "string", status: "string", observation_ids: "stringArray", proposed_rule: "string", scope: "string", expected_benefit: "string", possible_side_effects: "string", evaluation_metric: "string", review_at: "dateOrTimestamp", manual_reason: "nullableString", approved_by: "nullableString", approved_at: "nullableTimestamp", effective_at: "nullableTimestamp", pattern_key: "nullableString", legacy_approval: "object" },
+    fields: { title: "string", status: "string", observation_ids: "stringArray", proposed_rule: "string", scope: "string", expected_benefit: "string", possible_side_effects: "string", evaluation_metric: "string", review_at: "dateOrTimestamp", manual_reason: "nullableString", approved_by: "nullableString", approved_at: "nullableTimestamp", effective_at: "nullableTimestamp", pattern_key: "nullableString" },
   },
   rule: {
     id: "rule",
