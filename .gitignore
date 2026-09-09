@@ -1,0 +1,25 @@
+# Local raw archives and obsolete versions
+archive/files/**
+!archive/files/.gitkeep
+
+# Generated previews and transient work
+deliverables/.render/
+.harness/cache/
+.harness/tmp/
+.harness/backups/
+*.tmp
+*.bak
+*.swp
+.DS_Store
+
+# Runtime credentials are never project knowledge
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Node artifacts (scripts have no runtime dependencies by default)
+node_modules/
+coverage/
+

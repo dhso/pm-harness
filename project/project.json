@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "initialized": false,
+  "id": "",
+  "name": "",
+  "status": "uninitialized",
+  "timezone": "Asia/Hong_Kong",
+  "objective": "",
+  "scope_in": [],
+  "scope_out": [],
+  "success_criteria": [],
+  "constraints": [],
+  "stakeholders": [],
+  "created_at": null,
+  "updated_at": null
+}
+

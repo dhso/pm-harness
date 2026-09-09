@@ -1,0 +1,16 @@
+{
+  "name": "pm-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "rebuild": "node .harness/scripts/harness.mjs rebuild",
+    "lint": "node .harness/scripts/harness.mjs lint",
+    "brief": "node .harness/scripts/harness.mjs brief",
+    "test": "node --test"
+  }
+}
+

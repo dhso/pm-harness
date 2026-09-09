@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "default_timezone": "Asia/Hong_Kong",
+  "upcoming_days": 7,
+  "stale_task_days": 7,
+  "large_tracked_file_mb": 25,
+  "repeat_observation_threshold": 2,
+  "archive_roots": [
+    "archive/files",
+    "deliverables/.render",
+    ".harness/cache",
+    ".harness/tmp",
+    ".harness/backups"
+  ]
+}
+
