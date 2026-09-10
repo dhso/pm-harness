@@ -5,8 +5,8 @@
 - 目的：{{purpose}}
 - 期望动作或决定：{{call_to_action}}
 - 回复期限：{{response_due}}
-- 关联项目事项：{{related_ids}}
-- 依据来源：{{source_ids}}
+- 关联项目事项（仅内部记录，不放入外发正文）：{{related_ids}}
+- 依据来源（仅内部记录，不放入外发正文）：{{source_ids}}
 
 ## 主题
 
