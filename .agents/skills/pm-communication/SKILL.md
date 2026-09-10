@@ -1,6 +1,9 @@
 ---
 name: pm-communication
-description: Draft or revise outbound project emails, stakeholder updates, escalation notes, decision requests, and narrative reports in concise plain language without losing facts. Use when project information must become send-ready human communication; use pm-source-intake for incoming messages.
+description: 用简洁直白且不丢失事实的语言起草或修改项目邮件、干系人更新、升级说明、决策请求和叙事报告。需要将项目信息变成可发送的人际沟通文本时使用；处理收到的消息请使用 pm-source-intake。
+metadata:
+  kind: workflow
+  domain: communication
 ---
 
 # 编写项目邮件与汇报
@@ -11,9 +14,9 @@ description: Draft or revise outbound project emails, stakeholder updates, escal
 
 根据任务读取对应参考：
 
-- 邮件、会议跟进、提醒、升级或决策请求：读取 [邮件写作](references/email.md)。
-- 周报、月报、阶段报告、管理层简报或专项报告：读取 [汇报写作](references/report.md)。
-- 起草或改写任何对外文本：读取 [说人话与保真](references/plain-language.md)。
+- 邮件、会议跟进、提醒、升级或决策请求：读取[邮件写作](references/email.md)。
+- 周报、月报、阶段报告、管理层简报或专项报告：读取[汇报写作](references/report.md)。
+- 起草或改写任何对外文本：读取[说人话与保真](references/plain-language.md)。
 
 ## 共同工作方式
 

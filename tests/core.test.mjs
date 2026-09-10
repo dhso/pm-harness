@@ -102,7 +102,7 @@ test("lint enforces the 500-line Harness module boundary", async () => {
   assert.ok(result.issues.some((item) => item.code === "harness_module_too_large" && item.path === ".harness/lib/oversized.mjs"));
 });
 
-test("PM Skills have valid identities and resolvable progressive references", async () => {
+test("PM Skills have valid identities, routing metadata, and resolvable progressive references", async () => {
   for (const entry of await readdir(path.join(repositoryRoot, ".agents/skills"), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const skillRoot = path.join(repositoryRoot, ".agents/skills", entry.name);
@@ -110,8 +110,12 @@ test("PM Skills have valid identities and resolvable progressive references", as
     const frontmatter = content.match(/^---\n([\s\S]*?)\n---/)?.[1] || "";
     const name = frontmatter.match(/^name:\s*(.+)$/m)?.[1]?.trim();
     const description = frontmatter.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+    const kind = frontmatter.match(/^\s+kind:\s*(\S+)$/m)?.[1]?.trim();
+    const domain = frontmatter.match(/^\s+domain:\s*(\S+)$/m)?.[1]?.trim();
     assert.equal(name, entry.name);
     assert.ok(description && description.length <= 1024 && !/[<>]/.test(description));
+    assert.ok(["router", "workflow", "capability"].includes(kind));
+    assert.ok(domain);
     assert.ok(!content.includes("[TODO:"));
     for (const match of content.matchAll(/\]\((references\/[^)]+)\)/g)) {
       assert.ok((await readFile(path.join(skillRoot, match[1]), "utf8")).trim());

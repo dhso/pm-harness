@@ -1,16 +1,19 @@
 ---
 name: pm-requirements
-description: Draft, refine, review, or change project requirements and acceptance criteria with source traceability and impact control. Use for PRDs, user needs, scope changes, or requirement feedback.
+description: 起草、完善、评审或变更项目需求和验收标准，并保持来源追溯和影响控制。用于 PRD、用户需求、范围变化或需求反馈。
+metadata:
+  kind: workflow
+  domain: requirements
 ---
 
-# Manage requirements
+# 管理需求
 
-Read relevant project goals, existing requirements, sources, decisions, and schedule. Use `templates/prd.md` when a formal requirements document is needed.
+读取相关项目目标、现有需求、来源、决定和计划。需要正式需求文档时使用 `templates/prd.md`。
 
-For a new requirement, clarify the user/problem, intended outcome, non-goals, business rules, boundaries, dependencies, and testable acceptance criteria. Assign a stable requirement ID and keep source links.
+对于新需求，明确用户/问题、预期结果、非目标、业务规则、边界、依赖关系和可测试的验收标准。分配稳定的需求 ID 并保留来源链接。
 
-For a proposed modification, read `.harness/references/change-control.md`. Do not overwrite an approved requirement. Create a `CR-###` with a human-readable summary and exact structured before/after items, analyze schedule/deliverable/risk impact, and obtain an authorized business approval that the user confirms occurred. Apply only those approved values through a typed operation; mark the old requirement superseded only after approval.
+对于拟议修改，读取 `.harness/references/change-control.md`。不要覆盖已批准的需求。创建 `CR-###`，包含可读摘要和精确结构化前后值，分析对计划/交付物/风险的影响，并取得经授权且由用户确认已发生的业务批准。只通过类型化操作应用获批值；批准后再将旧需求标记为已替代。
 
-Distinguish stakeholder feedback from an authorized decision. Preserve unresolved disagreements and missing acceptance details.
+区分干系人反馈和授权决定。保留未解决的分歧和缺失的验收细节。
 
-Close out by updating the requirements register, affected tasks or forecast dates, relevant Wiki pages, current memory, and activity. Rebuild and lint.
+收尾时更新需求登记册、受影响的任务或预测日期、相关 Wiki 页面、当前记忆和活动记录。执行重建和 lint。

@@ -1,22 +1,25 @@
 ---
 name: pm-knowledge
-description: Answer project questions from local evidence and curate confirmed information into a concise, linked Wiki. Use for research synthesis or knowledge organization after sources have been triaged.
+description: 根据本地证据回答项目问题，并将已确认信息整理为精简且相互关联的 Wiki。来源完成分流后进行研究综合或知识组织时使用。
+metadata:
+  kind: workflow
+  domain: knowledge
 ---
 
-# Curate project knowledge
+# 整理项目知识
 
-Search indexes first, then open only relevant Wiki, project, source, and evidence records. Keep answers grounded in project files; cite paths and source IDs when useful.
+先搜索索引，再只打开相关的 Wiki、项目、来源和证据记录。回答应以项目文件为依据；有帮助时引用路径和来源 ID。
 
-Separate confirmed facts, interpretations, assumptions, and unresolved conflicts. If required information is absent, say so and identify the smallest useful next source or question.
+区分已确认事实、解释、假设和未解决冲突。若缺少必要信息，明确说明，并指出最小且有用的下一份来源或问题。
 
-When consolidating knowledge:
+整合知识时：
 
-- merge duplicate topic pages instead of copying the same fact repeatedly;
-- retain provenance and last-reviewed date;
-- link requirements, decisions, tasks, risks, and deliverables by stable ID;
-- move obsolete claims to a superseded section rather than silently deleting history;
-- keep raw communications out of the Wiki.
+- 合并重复主题页面，不要反复复制同一事实；
+- 保留来源和最近复查日期；
+- 使用稳定 ID 关联需求、决定、任务、风险和交付物；
+- 将过时主张移入已替代部分，不要静默删除历史；
+- 不把原始沟通材料放入 Wiki。
 
-Register every page in `knowledge/catalog.json` with a stable `WIKI-###`, sources, related IDs, review state, and review dates. Do not leave orphan Markdown pages.
+在 `knowledge/catalog.json` 登记每个页面，包含稳定的 `WIKI-###`、来源、关联 ID、评审状态和复查日期。不要留下未登记的 Markdown 孤立页面。
 
-Rebuild the knowledge index and update memory only when the information is durable across sessions.
+只有信息适合跨会话长期保留时，才重建知识索引并更新记忆。

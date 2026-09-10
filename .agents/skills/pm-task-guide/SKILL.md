@@ -1,24 +1,37 @@
 ---
 name: pm-task-guide
-description: Frame a substantial project task before work begins by clarifying its outcome, audience, constraints, evidence, deadline, and acceptance. Use for ambiguous or multi-step PM work; skip for simple factual questions.
+description: 在工作开始前通过明确结果、受众、约束、证据、期限和验收来梳理重要项目任务。用于模糊或多步骤的项目管理工作；简单事实问题跳过此 Skill。
+metadata:
+  kind: router
+  domain: pm
 ---
 
-# Guide a project task
+# 梳理项目任务
 
-Read the project brief, current status, current memory, and only the indexes relevant to the request.
+读取项目概述、当前状态、当前记忆，以及与请求相关的索引。
 
-Classify the request as one or more of: question, research, source intake, requirement, planning, status, decision, deliverable, review, or retrospective. Prefer the narrowest specialized skill after classification.
+将请求归类为以下一种或多种：问题、研究、来源摄取、需求、计划、状态、决定、交付物、评审或复盘。完成归类后优先选择范围最窄的专用 Skill。
 
-For substantial work, establish a compact task contract:
+## 组合路由
 
-- desired outcome and why it matters;
-- target audience or decision maker;
-- required output and format;
-- deadline or decision date;
-- source material and constraints;
-- observable acceptance criteria.
+- 先选择一个 `kind: workflow` 的主 Skill，负责用户结果和受控项目写入。
+- 再按产出需要加载零到多个 `kind: capability` 的能力 Skill；能力 Skill 不改变主流程的审批边界。
+- 同一份 Office 文件只加载 `officecli`，再按需读取一个格式参考；不要叠加多个同类工具 Skill。
+- 多个工作流确实需要串联时，明确主次和交接结果；无法判断主工作流或关键路径时先问用户。
 
-Ask only for missing information that materially changes the result. State low-risk assumptions. Do not make the user repeat facts already present in project files.
+典型路由：写邮件使用 `pm-communication` + 邮件参考；制作 Office 交付物使用 `pm-deliverable` + `officecli`；从 Excel 生成 PPT 时由 `pm-deliverable` 负责交付生命周期，`officecli` 负责文件操作。
 
-After the task, ensure the specialized skill performs project closeout. Do not create activity noise for a question that produced no durable outcome.
+对于重要工作，建立精简的任务契约：
 
+- 期望结果及其重要性；
+- 目标受众或决策人；
+- 所需产出及格式；
+- 截止日期或决策日期；
+- 来源材料和约束；
+- 可观察的验收标准。
+
+只询问会实质改变结果的缺失信息。说明低风险假设，不要让用户重复项目文件中已有的事实。
+
+工作进行中遵循 `AGENTS.md` 的“澄清与决策”规则：关键歧义及时提问，影响后续路径的决定列出选项请用户选择，确认前只做安全准备；低影响假设必须明确标注。
+
+任务完成后，确保由专用 Skill 执行项目收尾。没有产生长期结果的问题不要制造活动记录噪声。

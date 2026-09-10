@@ -1,14 +1,17 @@
 ---
 name: pm-review
-description: Review project work or deliverables against agreed criteria, perform acceptance, or run a retrospective that extracts actions and reusable lessons. Use at review gates, milestones, and project closeout.
+description: 对照约定标准评审项目工作或交付物，执行验收，或开展提取行动和可复用经验的复盘。评审关口、里程碑和项目收尾时使用。
+metadata:
+  kind: workflow
+  domain: review
 ---
 
-# Review outcomes
+# 评审结果
 
-Identify the governing objective, requirement, acceptance criteria, decision, or deliverable brief. Review against those sources rather than generic taste.
+识别适用的目标、需求、验收标准、决定或交付物说明。依据这些来源评审，不凭一般偏好判断。
 
-Report material gaps first, with evidence and impact. Distinguish blocking findings, recommended improvements, and optional polish. Do not mark work accepted without an active stakeholder in the `acceptance` scope, chronological evidence, and user confirmation.
+先报告重要缺口，并说明证据和影响。区分阻塞性发现、建议改进和可选润色。没有处于 `acceptance` 权限范围的有效干系人、按时间排列的证据和用户确认，不得将工作标记为已验收。
 
-For a retrospective, use `templates/retrospective.md`. Compare baseline, forecast, actual outcomes, requirement changes, risks, decisions, delivery evidence, and activity. Separate reusable process lessons from one-off circumstances.
+复盘时使用 `templates/retrospective.md`。比较基线、预测、实际结果、需求变化、风险、决定、交付证据和活动。区分可复用的流程经验与一次性情况。
 
-Record follow-up tasks and durable lessons. Send Harness failures or repeated corrections to observations; do not directly create active rules.
+记录后续任务和长期经验。将 Harness 失败或重复纠正记录为观察，不要直接创建生效规则。

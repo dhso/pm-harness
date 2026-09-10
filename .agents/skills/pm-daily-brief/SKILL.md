@@ -1,19 +1,22 @@
 ---
 name: pm-daily-brief
-description: Produce a focused daily project work brief from schedule, recent activity, risks, inbox, and delivery commitments. Use on the first substantial interaction of a day or when the user asks what to do next.
+description: 根据计划、近期活动、风险、收件箱和交付承诺生成聚焦的每日项目工作简报。每天首次重要互动或用户询问下一步时使用。
+metadata:
+  kind: workflow
+  domain: daily-brief
 ---
 
-# Guide today's work
+# 梳理今日工作
 
-Run `node .harness/scripts/harness.mjs brief --json` and inspect the referenced records when context is needed.
+运行 `node .harness/scripts/harness.mjs brief --json`，需要上下文时再检查其中引用的记录。
 
-Present a short brief containing:
+简报应简短，并包含：
 
-- the one to three highest-value actions for today and why now;
-- overdue, blocked, or dependency-sensitive work;
-- milestones and deliverables due in the configured upcoming window;
-- decisions, confirmations, or stakeholder follow-ups needed;
-- untriaged sources that may affect requirements or dates.
-- recent activity plus Wiki or active-rule reviews that are due.
+- 今日一至三项最高价值行动及此刻推进的原因；
+- 逾期、阻塞或对依赖关系敏感的工作；
+- 配置的近期窗口内到期的里程碑和交付物；
+- 需要处理的决定、确认或干系人跟进；
+- 可能影响需求或日期、尚未分流的来源；
+- 近期活动，以及到期的 Wiki 或生效规则复查。
 
-Do not overwhelm the user with the complete backlog. If priorities conflict, ask one focused tradeoff question. Do not repeat the brief on every chat in the same day unless the state materially changes.
+不要用完整待办清单淹没用户。若优先级冲突，提出一个聚焦的取舍问题。同一天内除非状态发生实质变化，否则不要在每次对话重复简报。

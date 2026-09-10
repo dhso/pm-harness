@@ -1,16 +1,19 @@
 ---
 name: pm-maintain
-description: Audit the project-management Harness, repair safe index drift, consolidate memory, and propose evidence-backed rule improvements. Use after material milestones, repeated corrections, detected inconsistencies, or an explicit audit request.
+description: 审计项目管理 Harness，修复安全的索引漂移，整理记忆，并提出有证据支持的规则改进。重大里程碑、重复纠正、发现不一致或明确要求审计时使用。
+metadata:
+  kind: workflow
+  domain: maintain
 ---
 
-# Maintain and evolve the Harness
+# 维护和演进 Harness
 
-Read `.harness/references/evolution-policy.md`, `.harness/references/git-policy.md`, active rules, observations, and recent lint output.
+读取 `.harness/references/evolution-policy.md`、`.harness/references/git-policy.md`、生效规则、观察记录和最近的 lint 输出。
 
-Run the single `maintain` flow from `.harness/references/automation.md`. It performs one safe rebuild, full lint, deduplicated rule-candidate creation, and due-rule review; it must not start a retry or watcher loop. Repair only safe mechanical drift. Do not resolve semantic conflicts by guessing.
+按照 `.harness/references/automation.md` 运行一次 `maintain` 流程。它会执行一次安全重建、完整 lint、去重后的规则候选生成和到期规则复查；不得启动重试或监听循环。只修复安全的机械漂移，不要靠猜测解决语义冲突。
 
-Review observations for repeated failure patterns. A rule proposal must cite evidence, state its scope, explain benefit and side effects, and define how later work will show whether it helped. Deduplicate or narrow proposals before adding new rules.
+检查观察记录中的重复失败模式。规则提案必须引用证据、说明适用范围、解释收益和副作用，并定义后续如何验证效果。新增规则前先去重或收窄提案。
 
-Present rule activation, baseline repair, broad deletion, or memory conflict resolution for conversational approval. Apply approved changes through typed record operations, record the decision, and set a later review condition. `governance/rules.json` is the fact source; `rules.md` is generated.
+规则激活、基线修复、大范围删除或记忆冲突解决必须在对话中呈现并获得批准。批准后通过类型化记录操作应用变更，记录决定并设置后续复查条件。`governance/rules.json` 是事实源，`rules.md` 是生成视图。
 
-Keep entry instructions and always-loaded memory concise. Move conditional detail into the relevant Skill reference instead of growing `AGENTS.md` into a manual.
+保持入口指令和始终加载的记忆精简。将条件性细节放入相关 Skill 参考文件，不要把 `AGENTS.md` 膨胀成手册。

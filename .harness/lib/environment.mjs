@@ -8,6 +8,21 @@ function addIssue(issues, level, code, relativePath, message) {
   issues.push({ level, code, path: relativePath, message });
 }
 
+const SKILL_KINDS = new Set(["router", "workflow", "capability"]);
+
+function skillFrontmatter(content) {
+  const block = content.match(/^---\n([\s\S]*?)\n---/)?.[1] || "";
+  const composes = block.match(/^\s+composes:\s*(.+)$/m)?.[1]?.split(",").map((item) => item.trim()).filter(Boolean) || [];
+  return {
+    name: block.match(/^name:\s*(\S+)$/m)?.[1] || null,
+    description: block.match(/^description:\s*(.+)$/m)?.[1]?.trim() || null,
+    kind: block.match(/^\s+kind:\s*(\S+)$/m)?.[1] || null,
+    domain: block.match(/^\s+domain:\s*(\S+)$/m)?.[1] || null,
+    owner: block.match(/^\s+owner:\s*(\S+)$/m)?.[1] || null,
+    composes,
+  };
+}
+
 function gitTrackedFiles(root) {
   try {
     if (execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() !== "true") return null;
@@ -37,8 +52,25 @@ export async function addEnvironmentIssues(root, data, issues) {
   else if (lstatSync(skillRoot).isSymbolicLink()) addIssue(issues, "error", "skills_symlink", ".agents/skills", "Cross-platform template requires a real Skills directory, not a symlink");
   else {
     const entries = await readdir(skillRoot, { withFileTypes: true });
-    const count = entries.filter((item) => item.isDirectory() && existsSync(path.join(skillRoot, item.name, "SKILL.md"))).length;
+    const skillEntries = entries.filter((item) => item.isDirectory() && existsSync(path.join(skillRoot, item.name, "SKILL.md")));
+    const count = skillEntries.length;
     if (count < 10) addIssue(issues, "warning", "skills_incomplete", ".agents/skills", `Expected at least 10 PM Skills, found ${count}`);
+    const skillMeta = new Map();
+    for (const entry of skillEntries) {
+      const relative = `.agents/skills/${entry.name}/SKILL.md`;
+      const meta = skillFrontmatter(await readFile(path.join(skillRoot, entry.name, "SKILL.md"), "utf8"));
+      skillMeta.set(entry.name, meta);
+      if (meta.name !== entry.name) addIssue(issues, "error", "skill_name_mismatch", relative, `Skill frontmatter name must match directory: ${entry.name}`);
+      if (!meta.description) addIssue(issues, "error", "skill_description_missing", relative, "Skill description is required for routing");
+      if (!SKILL_KINDS.has(meta.kind)) addIssue(issues, "error", "skill_kind_invalid", relative, "Skill metadata.kind must be router, workflow, or capability");
+      if (!meta.domain) addIssue(issues, "error", "skill_domain_missing", relative, "Skill metadata.domain is required for routing");
+    }
+    for (const entry of skillEntries) {
+      const relative = `.agents/skills/${entry.name}/SKILL.md`;
+      const meta = skillMeta.get(entry.name);
+      if (meta.kind === "capability" && meta.owner && !skillMeta.has(meta.owner)) addIssue(issues, "error", "skill_owner_missing", relative, `Capability owner does not exist: ${meta.owner}`);
+      for (const composed of meta.composes) if (!skillMeta.has(composed)) addIssue(issues, "error", "skill_composes_missing", relative, `Composed skill does not exist: ${composed}`);
+    }
   }
 
   for (const absolute of await harnessModules(root)) {

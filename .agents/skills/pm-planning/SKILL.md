@@ -1,16 +1,19 @@
 ---
 name: pm-planning
-description: Create or update project plans, milestones, dependencies, task sequencing, estimates, and Gantt forecasts. Use for planning and replanning; do not silently change an approved baseline.
+description: 创建或更新项目计划、里程碑、依赖关系、任务顺序、估算和甘特预测。规划或重新规划时使用；不得静默修改已批准的基线。
+metadata:
+  kind: workflow
+  domain: planning
 ---
 
-# Plan project work
+# 规划项目工作
 
-Read `.harness/references/schedule-policy.md` and the project goals, requirements, risks, decisions, and deliverables.
+读取 `.harness/references/schedule-policy.md` 以及项目目标、需求、风险、决定和交付物。
 
-Build an outcome-oriented plan with stable IDs, accountable owners, dependencies, acceptance/evidence, and explicit next actions. Avoid creating tasks that cannot be verified.
+建立以结果为导向的计划，包含稳定 ID、明确负责人、依赖关系、验收/证据和明确的下一步行动。避免创建无法验证的任务。
 
-Set baseline dates only when the user approves a plan. Routine progress changes forecast and actual fields, never baseline. If requested work adds, changes, or removes anything from an approved baseline, create a change request with an exact structured before/after item for every target and explain downstream impact before applying it.
+只有用户批准计划后才能设置基线日期。日常进度只修改预测和实际字段，不修改基线。如果请求的工作要在已批准基线上新增、修改或删除内容，为每个目标创建包含精确结构化前后值的变更请求，并在应用前说明下游影响。
 
-Apply schedule changes through typed record operations so baseline revisions, digests, approvals, and change logs remain consistent. Rebuild so `project/gantt.md` reflects canonical data. Record meaningful planning decisions and unresolved dependencies.
+通过类型化记录操作应用计划变更，确保基线修订、摘要、审批和变更日志保持一致。执行重建，使 `project/gantt.md` 反映规范数据。记录重要的计划决定和未解决依赖。
 
-Summarize critical path, near-term milestones, top risks, and decisions needed rather than reciting the full task list.
+总结关键路径、近期里程碑、主要风险和待决定事项，不要复述完整任务清单。

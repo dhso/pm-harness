@@ -1,23 +1,26 @@
 ---
 name: pm-onboarding
-description: Initialize an uninitialized local project-management workspace through conversation. Use when the user asks to start, set up, or initialize a project; do not use for an already initialized project's routine work.
+description: 通过对话初始化尚未建立事实的本地项目管理工作区。用户要求启动、设置或初始化项目时使用；已初始化项目的日常工作不要使用。
+metadata:
+  kind: workflow
+  domain: onboarding
 ---
 
-# Initialize the project
+# 初始化项目
 
-Read `project/project.json`. Stop if it is already initialized unless the user explicitly wants to re-baseline the project; re-baselining requires a change proposal.
+读取 `project/project.json`。如果项目已经初始化则停止，除非用户明确要求重新建立基线；重新建立基线需要变更提案。
 
-Gather the minimum durable context:
+收集最少且可长期保留的上下文：
 
-- project name and problem/background;
-- objective and measurable success criteria;
-- scope in and scope out;
-- key stakeholders and who may approve scope, dates, requirements, and acceptance;
-- known milestones, constraints, sources, risks, and expected deliverables;
-- project timezone and any fixed dates.
+- 项目名称及问题/背景；
+- 目标和可衡量的成功标准；
+- 范围内和范围外事项；
+- 关键干系人，以及可批准范围、日期、需求和验收的人；
+- 已知里程碑、约束、来源、风险和预期交付物；
+- 项目时区和固定日期。
 
-Ask at most three high-impact questions per turn. Offer reasonable assumptions for missing low-impact details rather than turning onboarding into a long form.
+每轮最多询问三个高影响问题。对缺失的低影响细节提供合理假设，不要把引导变成长表单。
 
-Read `.harness/references/data-model.md` before assigning IDs or statuses. Use the agent-only initialization contract in `.harness/references/automation.md`. Register stakeholders separately in `project/stakeholders.json`; granting approval scopes requires explicit user confirmation. Create an initial baseline only with valid schedule authority, update current status and memory, then rebuild and lint.
+分配 ID 或状态前读取 `.harness/references/data-model.md`。使用 `.harness/references/automation.md` 中仅供 Agent 使用的初始化契约。在 `project/stakeholders.json` 中单独登记干系人；授予审批范围需要用户明确确认。只有具备有效计划权限时才创建初始基线，然后更新当前状态和记忆，并执行重建和 lint。
 
-Finish with a short project summary, remaining unknowns, and the most useful next action.
+最后给出简短的项目摘要、剩余未知事项和最有用的下一步行动。
