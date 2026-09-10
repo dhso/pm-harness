@@ -703,3 +703,196 @@ test("invalid transitions return a structured error naming the legal targets", a
   assert.deepEqual(reopened.allowed_targets, []);
   assert.ok(reopened.fix.includes("terminal state"));
 });
+
+test("an empty baseline cannot be approved and is caught by lint if already stored", async () => {
+  const root = await workspace();
+  await initialize(root, "Empty baseline");
+  const approver = (await stakeholder(root, ["schedule_baseline"])).stakeholder;
+  // 没有任何条目携带基线日期时，批准会让空快照的摘要自洽，必须在入口拒绝。
+  const refused = JSON.parse((await rejection(recordOperation(root, operation("schedule.baseline.approve", {}, { approval: businessApproval(approver.id) })))).message);
+  assert.equal(refused.code, "baseline_empty");
+  assert.ok(refused.fix.includes("baseline_start"));
+
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "No dates", owner: "PM" }));
+  assert.ok((await rejection(recordOperation(root, operation("schedule.baseline.approve", {}, { approval: businessApproval(approver.id) })))).message.includes("baseline_empty"));
+
+  // 已落盘的空批准状态过去可以通过 lint，因为空快照摘要恰好匹配。
+  const schedule = await readJson(root, "project/schedule.json");
+  schedule.baseline = { revision: 1, status: "approved", digest: schedule.baseline.digest, approved_by_id: approver.id, approved_at: minutesAgo(2), change_request_id: null };
+  await writeJsonFixture(root, "project/schedule.json", schedule);
+  assert.ok((await lintWorkspace(root)).issues.some((item) => item.code === "baseline_empty"));
+});
+
+test("reapproving the same baseline is a safe no-op and cannot conceal approved baseline drift", async () => {
+  const root = await workspace();
+  await initialize(root, "Baseline replay");
+  const approver = (await stakeholder(root, ["schedule_baseline"])).stakeholder;
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Release", baseline_end: "2026-09-30" }));
+  const approved = await recordOperation(root, operation("schedule.baseline.approve", {}, { approval: businessApproval(approver.id) }));
+  assert.equal(approved.baseline.revision, 1);
+  assert.equal(approved.already_approved, false);
+
+  const repeated = await recordOperation(root, operation("schedule.baseline.approve", {}));
+  assert.equal(repeated.already_approved, true);
+  assert.equal(repeated.baseline.revision, 1);
+  const baselineChanges = (await readJson(root, "governance/change-log.json")).changes.filter((item) => item.kind === "schedule_baseline");
+  assert.equal(baselineChanges.length, 1);
+
+  const schedule = await readJson(root, "project/schedule.json");
+  schedule.tasks[0].baseline_end = "2026-10-01";
+  await writeJsonFixture(root, "project/schedule.json", schedule);
+  const drift = JSON.parse((await rejection(recordOperation(root, operation("schedule.baseline.approve", {}, { approval: businessApproval(approver.id) })))).message);
+  assert.equal(drift.code, "approved_baseline_drift");
+});
+
+test("filling many baseline dates under one change request produces a single revision", async () => {
+  const root = await workspace();
+  await initialize(root, "Batch baseline");
+  const approver = (await stakeholder(root, ["schedule_baseline"])).stakeholder;
+  const first = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Design", owner: "PM" }));
+  const second = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Build", owner: "PM" }));
+  const third = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Ship", owner: "PM" }));
+  const ids = [first.schedule_item.id, second.schedule_item.id, third.schedule_item.id];
+  const dates = { [ids[0]]: "2026-09-05", [ids[1]]: "2026-09-06", [ids[2]]: "2026-09-07" };
+
+  const proposed = await recordOperation(root, operation("change.propose", {
+    title: "Set the initial baseline",
+    approval_scope: "schedule_baseline",
+    target_ids: ids,
+    change_items: ids.map((id) => ({ target_id: id, before: { baseline_start: null, baseline_end: null }, after: { baseline_start: "2026-09-01", baseline_end: dates[id] } })),
+    before: "no baseline",
+    after: "baseline set",
+    reason: "Plan agreed",
+    impact: "None",
+    created_at: minutesAgo(5),
+  }));
+  await recordOperation(root, operation("change.approve", { id: proposed.change_request.id }, { approval: businessApproval(approver.id) }));
+
+  const scheduleBefore = await readFile(path.join(root, "project/schedule.json"), "utf8");
+  await assert.rejects(recordOperation(root, operation("schedule.batch-upsert", { items: [
+    { collection: "tasks", record: { id: ids[0], baseline_start: "2026-09-01", baseline_end: dates[ids[0]] } },
+    { collection: "tasks", record: { id: ids[1], baseline_start: "invalid", baseline_end: dates[ids[1]] } },
+  ] }, { approval: businessApproval(approver.id, { change_request_id: proposed.change_request.id }) })), /record_validation_failed/);
+  assert.equal(await readFile(path.join(root, "project/schedule.json"), "utf8"), scheduleBefore, "invalid batch must not write a partial baseline");
+
+  const applied = await recordOperation(root, operation("schedule.batch-upsert", { items: ids.map((id) => ({
+    collection: "tasks",
+    record: { id, baseline_start: "2026-09-01", baseline_end: dates[id] },
+  })) }, { approval: businessApproval(approver.id, { change_request_id: proposed.change_request.id }) }));
+  assert.equal(applied.baseline.revision, 1);
+  assert.deepEqual(applied.schedule_items.map((item) => item.id), ids);
+
+  const changes = (await readJson(root, "governance/change-log.json")).changes.filter((item) => item.kind === "schedule_baseline");
+  assert.equal(changes.length, 1);
+  assert.deepEqual(changes[0].target_ids, ids);
+  assert.equal(changes[0].baseline_revision, 1);
+  // 合并后的记录仍须与当前基线摘要一致，否则 lint 会判定缺少受控变更记录。
+  const result = await lintWorkspace(root);
+  assert.ok(!result.issues.some((item) => item.code === "baseline_approval_missing" || item.code === "baseline_empty"), JSON.stringify(result.issues));
+  const request = (await readJson(root, "project/requirements.json")).change_requests[0];
+  assert.equal(request.status, "implemented");
+  assert.deepEqual(request.applied_target_ids, ids);
+});
+
+test("separate baseline operations remain append-only and revisions stay monotonic when change requests interleave", async () => {
+  const root = await workspace();
+  await initialize(root, "Interleaved baselines");
+  const approver = (await stakeholder(root, ["schedule_baseline"])).stakeholder;
+  const ids = [];
+  for (const title of ["Design", "Build", "Ship"]) ids.push((await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title }))).schedule_item.id);
+
+  async function approveChange(title, targetIds) {
+    const proposed = await recordOperation(root, operation("change.propose", {
+      title,
+      approval_scope: "schedule_baseline",
+      target_ids: targetIds,
+      change_items: targetIds.map((id) => ({ target_id: id, before: { baseline_end: null }, after: { baseline_end: "2026-10-01" } })),
+      before: "no date",
+      after: "2026-10-01",
+      reason: "Approved plan",
+      impact: "Sets baseline",
+      created_at: minutesAgo(5),
+    }));
+    await recordOperation(root, operation("change.approve", { id: proposed.change_request.id }, { approval: businessApproval(approver.id) }));
+    return proposed.change_request.id;
+  }
+
+  const firstRequest = await approveChange("First group", ids.slice(0, 2));
+  const secondRequest = await approveChange("Second group", ids.slice(2));
+  const apply = (id, changeRequestId) => recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id, baseline_end: "2026-10-01" } }, { approval: businessApproval(approver.id, { change_request_id: changeRequestId }) }));
+  const revisions = [];
+  revisions.push((await apply(ids[0], firstRequest)).baseline.revision);
+  const firstLogSnapshot = structuredClone((await readJson(root, "governance/change-log.json")).changes.find((item) => item.kind === "schedule_baseline"));
+  revisions.push((await apply(ids[2], secondRequest)).baseline.revision);
+  revisions.push((await apply(ids[1], firstRequest)).baseline.revision);
+
+  assert.deepEqual(revisions, [1, 2, 3]);
+  const baselineChanges = (await readJson(root, "governance/change-log.json")).changes.filter((item) => item.kind === "schedule_baseline");
+  assert.deepEqual(baselineChanges[0], firstLogSnapshot, "later operations must not rewrite an existing CHG record");
+  assert.deepEqual(baselineChanges.map((item) => item.baseline_revision), [1, 2, 3]);
+  assert.equal((await lintWorkspace(root)).ok, true);
+
+  const corruptedLog = await readJson(root, "governance/change-log.json");
+  corruptedLog.changes.filter((item) => item.kind === "schedule_baseline").at(-1).baseline_revision = 1;
+  await writeJsonFixture(root, "governance/change-log.json", corruptedLog);
+  const corruptedSchedule = await readJson(root, "project/schedule.json");
+  corruptedSchedule.baseline.revision = 1;
+  await writeJsonFixture(root, "project/schedule.json", corruptedSchedule);
+  assert.ok((await lintWorkspace(root)).issues.some((item) => item.code === "baseline_revision_nonmonotonic"));
+});
+
+test("composite payload types expose their element structure in docs and the contract command", async () => {
+  // 过去 items 只出现一个类型名 inboxItemArray，写一条记录得去反推 inbox.json。
+  const document = renderOperationContract();
+  assert.ok(document.includes("`inboxItemArray` 的元素"));
+  assert.ok(document.includes("由 Harness 补全，不要传：`id`、`source_id`、`created_at`"));
+  for (const field of ["classification", "summary", "authority", "status"]) assert.ok(document.includes(`\`${field}\``));
+  assert.ok(document.includes("`changeItems` 的元素"));
+  assert.ok(document.includes("`operationArray` 的元素"));
+  assert.ok(document.includes("`scheduleUpsertItemArray` 的元素"));
+
+  const contract = describeOperationContract("source.register");
+  assert.deepEqual(contract.composite_types.inboxItemArray.generated, ["id", "source_id", "created_at"]);
+  assert.deepEqual(contract.composite_types.inboxItemArray.required, ["classification", "summary"]);
+  assert.ok(contract.composite_types.inboxItemArray.defaults.includes("status"));
+  assert.ok(contract.composite_types.inboxItemArray.fields.includes("classification"));
+  assert.ok(!contract.composite_types.inboxItemArray.fields.includes("created_at"));
+  const scheduleContract = describeOperationContract("schedule.batch-upsert");
+  assert.ok(scheduleContract.composite_types.scheduleUpsertItemArray.record_fields.includes("baseline_end"));
+  assert.equal(describeOperationContract("project.initialize").composite_types, undefined);
+});
+
+test("record --help explains usage instead of failing with input_required", async () => {
+  const root = await workspace();
+  const run = (...args) => JSON.parse(execFileSync(process.execPath, [path.join(root, ".harness/scripts/harness.mjs"), ...args], { cwd: root, encoding: "utf8" }));
+  const help = run("record", "--help");
+  assert.equal(help.ok, true);
+  assert.ok(help.usage.includes("record"));
+  assert.ok(help.envelope_required.includes("operation_id"));
+  const commands = run("--help").commands;
+  for (const command of ["contract", "rebuild", "brief", "maintain", "init", "source-add", "activity-add", "docs-contract"]) assert.ok(commands.includes(command));
+  // 真正缺少输入时仍须以非零退出码报错，--help 不能把失败路径也变成成功。
+  const failure = await rejection(Promise.resolve().then(() => execFileSync(process.execPath, [path.join(root, ".harness/scripts/harness.mjs"), "record", "--data", "{}"], { cwd: root, encoding: "utf8" })));
+  assert.equal(JSON.parse(failure.stdout).ok, false);
+});
+
+test("approval guardrails return an actionable fix, not just an error code", async () => {
+  const root = await workspace();
+  await initialize(root, "Guardrail messages");
+  const approver = (await stakeholder(root, ["schedule_baseline"])).stakeholder;
+  const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Release", owner: "PM", baseline_start: "2026-09-01", baseline_end: "2026-09-10" }, { approval: businessApproval(approver.id) }));
+
+  const proposed = await recordOperation(root, operation("change.propose", { title: "Slip", approval_scope: "schedule_baseline", target_ids: [task.schedule_item.id], change_items: [{ target_id: task.schedule_item.id, before: { baseline_end: "2026-09-10" }, after: { baseline_end: "2026-09-12" } }], before: "10th", after: "12th", reason: "Delay", impact: "Two days", created_at: new Date().toISOString() }));
+  // 审批时间早于变更请求创建时间时，报错必须说清"时间戳需要递增"。
+  const ordering = JSON.parse((await rejection(recordOperation(root, operation("change.approve", { id: proposed.change_request.id }, { approval: businessApproval(approver.id, { approved_at: minutesAgo(30) }) })))).message);
+  assert.equal(ordering.code, "approval_predates_change_request");
+  assert.ok(ordering.fix.includes("created_at"));
+  assert.ok(ordering.created_at && ordering.approved_at);
+
+  const unscoped = (await stakeholder(root, [])).stakeholder;
+  const scope = JSON.parse((await rejection(recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, baseline_end: "2026-09-13" } }, { approval: businessApproval(unscoped.id) })))).message);
+  assert.ok(scope.fix.includes("schedule_baseline"));
+  const missingRequest = JSON.parse((await rejection(recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, baseline_end: "2026-09-14" } }, { approval: businessApproval(approver.id) })))).message);
+  assert.equal(missingRequest.code, "approved_change_request_required");
+  assert.ok(missingRequest.fix.includes("change.propose"));
+});

@@ -62,6 +62,29 @@ function print(value) {
 const command = process.argv[2];
 const root = process.cwd();
 
+const USAGE = {
+  record: "harness.mjs record [--data '<json>'|--input <file>|stdin] [--dry-run] [--compact] — 写入一条操作；字段见 contract <type> 或 .harness/references/operation-contract.md",
+  query: "harness.mjs query <target|ID> [--id <id>] [--fields a,b] [--limit n] [--compact] — 读取工作区记录",
+  contract: "harness.mjs contract <operation-type> — 输出该操作的 payload 契约、必填字段与状态转换",
+  rebuild: "harness.mjs rebuild — 从事实源重建自动生成的索引、甘特图和视图",
+  lint: "harness.mjs lint [--fast] [--json] — 校验工作区",
+  brief: "harness.mjs brief — 生成每日项目工作简报",
+  maintain: "harness.mjs maintain — 执行完整维护与哈希检查",
+  init: "harness.mjs init [--data '<json>'|--input <file>|stdin] — 兼容的项目初始化入口",
+  "source-add": "harness.mjs source-add [--data '<json>'|--input <file>|stdin] — 兼容的来源登记入口",
+  "activity-add": "harness.mjs activity-add [--data '<json>'|--input <file>|stdin] — 兼容的活动登记入口",
+  "docs-contract": "harness.mjs docs-contract — 重新生成操作契约参考文档",
+  hash: "harness.mjs hash <file> — 计算文件 sha256",
+};
+
+// --help 必须自解释：过去 `record --help` 会掉进 input_required，把用法问题伪装成输入问题。
+if (hasFlag("--help") || hasFlag("-h") || command === "help") {
+  const topic = command === "help" ? process.argv[3] : command;
+  if (USAGE[topic]) print({ ok: true, usage: USAGE[topic], ...(topic === "record" ? { envelope_required: ["schema_version", "operation_id", "type", "actor", "reason", "source_ids", "payload"], hint: "记录字段放在 payload 内；用 contract <type> 查具体字段" } : {}) });
+  else print({ ok: true, commands: Object.keys(USAGE), usage: "harness.mjs <command> --help 查看单个命令用法" });
+  process.exit(0);
+}
+
 try {
   if (command === "rebuild") {
     print(await rebuildWorkspace(root));

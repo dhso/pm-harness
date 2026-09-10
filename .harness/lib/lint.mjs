@@ -191,12 +191,21 @@ export async function collectIssues(root, data, options = {}) {
 
   const currentBaselineDigest = baselineDigest(data.schedule);
   const baseline = data.schedule.baseline;
+  const baselineChanges = (byKind.change || []).filter((item) => item.kind === "schedule_baseline");
+  for (let index = 0; index < baselineChanges.length; index += 1) {
+    const revision = baselineChanges[index].baseline_revision;
+    const previous = baselineChanges[index - 1]?.baseline_revision || 0;
+    if (!Number.isInteger(revision) || revision <= previous) addIssue(issues, "error", "baseline_revision_nonmonotonic", STORE_FILES.changes, `${baselineChanges[index].id} revision ${revision} must be greater than ${previous}`);
+  }
   if (!isPlainObject(baseline) || !Number.isInteger(baseline.revision) || !["draft", "approved"].includes(baseline.status) || baseline.digest !== currentBaselineDigest) {
     addIssue(issues, "error", "baseline_metadata_invalid", STORE_FILES.schedule, "Baseline revision, status, or digest does not match current baseline fields");
   } else if (baseline.status === "approved") {
-    const approvals = (byKind.change || []).filter((item) => item.kind === "schedule_baseline" && item.baseline_revision === baseline.revision);
-    const latest = approvals.at(-1);
-    if (!latest || latest.after_hash !== currentBaselineDigest) addIssue(issues, "error", "baseline_approval_missing", STORE_FILES.schedule, "Approved baseline has no matching controlled change record");
+    // 空基线通过校验只是因为空快照的摘要恰好自洽，这里补上内容层的检查。
+    if (![...(byKind.milestone || []), ...(byKind.task || [])].some((item) => item.baseline_start || item.baseline_end)) {
+      addIssue(issues, "error", "baseline_empty", STORE_FILES.schedule, "Baseline is approved but no task or milestone carries baseline dates");
+    }
+    const latest = baselineChanges.at(-1);
+    if (!latest || latest.baseline_revision !== baseline.revision || latest.after_hash !== currentBaselineDigest) addIssue(issues, "error", "baseline_approval_missing", STORE_FILES.schedule, "Approved baseline has no matching latest controlled change record");
     if (!canApprove(baseline.approved_by_id, "schedule_baseline") || !isTimestamp(baseline.approved_at)) addIssue(issues, "error", "baseline_authority_invalid", STORE_FILES.schedule, "Approved baseline lacks an active stakeholder with schedule_baseline scope and a valid approval time");
   } else if ([...(byKind.milestone || []), ...(byKind.task || [])].some((item) => item.baseline_start || item.baseline_end)) {
     addIssue(issues, "warning", "baseline_confirmation_required", STORE_FILES.schedule, "Baseline dates are preserved but still need authority confirmation");

@@ -67,6 +67,7 @@ export const OPERATION_TYPES = Object.freeze([
   "source.register",
   "activity.record",
   "schedule.upsert",
+  "schedule.batch-upsert",
   "schedule.baseline.approve",
   "requirement.upsert",
   "register.upsert",

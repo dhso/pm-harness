@@ -1,6 +1,6 @@
 // 从可执行操作契约生成 payload 字段参考；本模块只做呈现。
 import { nearestName, OPERATION_TYPES, STATUS, TRANSITIONS } from "./model.mjs";
-import { OPERATION_SPECS } from "./contracts.mjs";
+import { COMPOSITE_TYPES, OPERATION_SPECS } from "./contracts.mjs";
 
 const GENERATED_PATH = ".harness/references/operation-contract.md";
 
@@ -38,6 +38,17 @@ function operationSection(type) {
   lines.push("| 字段 | 类型 | 必填 |", "|---|---|---|");
   for (const row of rows) lines.push(`| \`${row.field}\` | \`${row.type}\` | ${row.required} |`);
   lines.push("");
+  // 复合类型只写类型名等于没写：元素结构必须就地展开，否则只能去反推数据文件。
+  for (const type of [...new Set(rows.map((row) => row.type))].filter((type) => COMPOSITE_TYPES[type])) {
+    const composite = COMPOSITE_TYPES[type];
+    lines.push(`\`${type}\` 的元素是${composite.element}：`, "");
+    lines.push(`可用字段：${composite.fields().map((field) => `\`${field}\``).join("、")}`, "");
+    if (composite.required?.length) lines.push(`必填：${composite.required.map((field) => `\`${field}\``).join("、")}`, "");
+    if (composite.defaults?.length) lines.push(`可省略并由 Harness 补全：${composite.defaults.map((field) => `\`${field}\``).join("、")}`, "");
+    if (composite.generated?.length) lines.push(`由 Harness 补全，不要传：${composite.generated.map((field) => `\`${field}\``).join("、")}`, "");
+    if (composite.record_fields) lines.push(`record 可用字段：${composite.record_fields().map((field) => `\`${field}\``).join("、")}`, "");
+    if (composite.note) lines.push(composite.note, "");
+  }
   for (const statusKind of spec.status_kinds || []) {
     lines.push(`\`${statusKind}\` 状态取值：${STATUS[statusKind].map((item) => `\`${item}\``).join("、")}`, "");
     const transitions = TRANSITIONS[statusKind];
@@ -78,7 +89,13 @@ export function describeOperationContract(type) {
     throw new Error(JSON.stringify({ code: "unknown_operation_type", type, ...(suggestion ? { did_you_mean: suggestion } : {}), supported_types: [...OPERATION_TYPES] }));
   }
   const statuses = Object.fromEntries((spec.status_kinds || []).map((kind) => [kind, { values: STATUS[kind], transitions: TRANSITIONS[kind] || null }]));
-  return { type, ...spec, statuses };
+  const composites = Object.fromEntries(Object.values(spec.fields || {})
+    .filter((fieldType) => COMPOSITE_TYPES[fieldType])
+    .map((fieldType) => {
+      const composite = COMPOSITE_TYPES[fieldType];
+      return [fieldType, { ...composite, fields: composite.fields(), ...(composite.record_fields ? { record_fields: composite.record_fields() } : {}) }];
+    }));
+  return { type, ...spec, statuses, ...(Object.keys(composites).length ? { composite_types: composites } : {}) };
 }
 
 export const OPERATION_CONTRACT_PATH = GENERATED_PATH;

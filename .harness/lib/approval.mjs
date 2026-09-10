@@ -6,7 +6,7 @@ function verifyExactChange(changeRequest, actualChanges) {
     throw new Error(JSON.stringify({ code: "change_request_exact_change_required", id: changeRequest.id, fix: "Record structured before/after change_items before approval" }));
   }
   if (!Array.isArray(actualChanges) || !actualChanges.length) {
-    throw new Error(JSON.stringify({ code: "actual_change_required", id: changeRequest.id }));
+    throw new Error(JSON.stringify({ code: "actual_change_required", id: changeRequest.id, fix: "本次写入没有改动任何受控字段，无需引用变更请求" }));
   }
   for (const actual of actualChanges) {
     const expected = changeRequest.change_items.find((item) => item.target_id === actual.target_id);
@@ -19,24 +19,27 @@ function verifyExactChange(changeRequest, actualChanges) {
 export function verifyApproval(data, approval, scope, { requireChangeRequest = false, targetIds = [], actualChanges = [] } = {}) {
   if (!isPlainObject(approval)) throw new Error(JSON.stringify({ code: "approval_required", scope, fix: "Provide structured approval confirmed by the user" }));
   const stakeholder = (data.stakeholders.stakeholders || []).find((item) => item.id === approval.approved_by_id && item.status === "active");
-  if (!stakeholder || !stakeholder.approval_scopes.includes(scope)) throw new Error(JSON.stringify({ code: "approval_scope_missing", scope, approved_by_id: approval.approved_by_id }));
-  if (!isTimestamp(approval.approved_at) || !isTimestamp(approval.confirmed_by_user_at)) throw new Error(JSON.stringify({ code: "approval_time_invalid", scope }));
+  if (!stakeholder || !stakeholder.approval_scopes.includes(scope)) throw new Error(JSON.stringify({ code: "approval_scope_missing", scope, approved_by_id: approval.approved_by_id, fix: `使用 approval_scopes 含 ${scope} 的在职干系人，或先用 stakeholder.upsert 授予该范围` }));
+  if (!isTimestamp(approval.approved_at) || !isTimestamp(approval.confirmed_by_user_at)) throw new Error(JSON.stringify({ code: "approval_time_invalid", scope, fix: "approved_at 与 confirmed_by_user_at 都必须是 ISO 8601 时间戳" }));
   if (Date.parse(approval.confirmed_by_user_at) < Date.parse(approval.approved_at)) throw new Error(JSON.stringify({ code: "approval_time_order", scope, fix: "User confirmation cannot predate the reported business approval" }));
   let changeRequest = null;
   if (requireChangeRequest) {
     changeRequest = (data.requirements.change_requests || []).find((item) => item.id === approval.change_request_id && item.status === "approved");
-    if (!changeRequest || changeRequest.approval_scope !== scope) throw new Error(JSON.stringify({ code: "approved_change_request_required", scope }));
-    if (changeRequest.approved_change_digest !== digestValue(changeRequest.change_items)) throw new Error(JSON.stringify({ code: "change_request_approved_snapshot_mismatch", id: changeRequest.id }));
+    if (!changeRequest || changeRequest.approval_scope !== scope) throw new Error(JSON.stringify({ code: "approved_change_request_required", scope, fix: `改动已批准对象前，先用 change.propose 提交并 change.approve 批准一条 approval_scope 为 ${scope} 的变更请求，再在 approval.change_request_id 中引用` }));
+    if (changeRequest.approved_change_digest !== digestValue(changeRequest.change_items)) throw new Error(JSON.stringify({ code: "change_request_approved_snapshot_mismatch", id: changeRequest.id, fix: "变更请求批准后 change_items 被直接改动；恢复原内容或另提一条新的变更请求" }));
     if (approval.approved_by_id !== changeRequest.approved_by_id) throw new Error(JSON.stringify({ code: "change_request_approval_mismatch", id: changeRequest.id, fix: "Use the business approver recorded on the change request" }));
-    if (targetIds.some((id) => !changeRequest.target_ids.includes(id))) throw new Error(JSON.stringify({ code: "change_request_target_mismatch", scope, target_ids: targetIds }));
-    if (targetIds.some((id) => (changeRequest.applied_target_ids || []).includes(id))) throw new Error(JSON.stringify({ code: "change_request_already_applied", id: changeRequest.id, target_ids: targetIds }));
+    if (targetIds.some((id) => !changeRequest.target_ids.includes(id))) throw new Error(JSON.stringify({ code: "change_request_target_mismatch", scope, target_ids: targetIds, fix: "目标不在变更请求的 target_ids 内；另提一条覆盖该目标的变更请求" }));
+    if (targetIds.some((id) => (changeRequest.applied_target_ids || []).includes(id))) throw new Error(JSON.stringify({ code: "change_request_already_applied", id: changeRequest.id, target_ids: targetIds, fix: "该目标已按此变更请求落地；如需再改，另提一条新的变更请求" }));
     verifyExactChange(changeRequest, actualChanges);
   }
   return { stakeholder, changeRequest };
 }
 
 export function addControlledChange(data, envelope, details) {
-  const linkedRequest = envelope.approval?.change_request_id ? (data.requirements.change_requests || []).find((item) => item.id === envelope.approval.change_request_id) : null;
+  const changeRequestId = envelope.approval?.change_request_id || null;
+  const linkedRequest = changeRequestId ? (data.requirements.change_requests || []).find((item) => item.id === changeRequestId) : null;
+  if (changeRequestId && linkedRequest?.status !== "approved") throw new Error(JSON.stringify({ code: "approved_change_request_required", id: changeRequestId, fix: "引用的变更请求必须存在且已批准" }));
+  if (envelope.approval?.change_request_id && linkedRequest?.status !== "approved") throw new Error(JSON.stringify({ code: "approved_change_request_required", change_request_id: envelope.approval.change_request_id, fix: "Only an approved change request may be linked to an applied controlled change" }));
   const record = {
     id: nextId(data.changes.changes, "change"),
     operation_id: envelope.operation_id,
@@ -55,16 +58,13 @@ export function addControlledChange(data, envelope, details) {
   };
   validateOrThrow("change", record);
   data.changes.changes.push(record);
-  if (record.change_request_id) {
-    const request = (data.requirements.change_requests || []).find((item) => item.id === record.change_request_id);
-    if (request) {
-      const appliedTargetIds = details.change_request_target_ids || record.target_ids;
-      request.applied_target_ids = [...new Set([...(request.applied_target_ids || []), ...appliedTargetIds])];
-      request.applied_operation_ids = [...new Set([...(request.applied_operation_ids || []), envelope.operation_id])];
-      if (request.target_ids.every((id) => request.applied_target_ids.includes(id))) {
-        request.status = "implemented";
-        request.applied_at = record.effective_at;
-      }
+  if (linkedRequest) {
+    const appliedTargetIds = details.change_request_target_ids || record.target_ids;
+    linkedRequest.applied_target_ids = [...new Set([...(linkedRequest.applied_target_ids || []), ...appliedTargetIds])];
+    linkedRequest.applied_operation_ids = [...new Set([...(linkedRequest.applied_operation_ids || []), envelope.operation_id])];
+    if (linkedRequest.target_ids.every((id) => linkedRequest.applied_target_ids.includes(id))) {
+      linkedRequest.status = "implemented";
+      linkedRequest.applied_at = record.effective_at;
     }
   }
   return record;

@@ -110,6 +110,18 @@ raw_path 必须位于项目目录内；items 为收件箱条目数组。
 | `archive_reason` | `string` |  |
 | `items` | `inboxItemArray` |  |
 
+`inboxItemArray` 的元素是收件箱条目对象：
+
+可用字段：`applied_at`、`applied_to_ids`、`authority`、`classification`、`confidence`、`disposition_reason`、`proposed_action`、`quote`、`related_ids`、`status`、`summary`
+
+必填：`classification`、`summary`
+
+可省略并由 Harness 补全：`authority`、`status`、`related_ids`、`applied_to_ids`
+
+由 Harness 补全，不要传：`id`、`source_id`、`created_at`
+
+authority 默认为 unknown，status 默认为 new；id、source_id、created_at 由 Harness 补全，传入会被拒。
+
 ### `activity.record`
 
 必填：`action`、`outcome`
@@ -168,9 +180,33 @@ raw_path 必须位于项目目录内；items 为收件箱条目数组。
 
 允许转换：`not_started` → `in_progress` | `blocked` | `cancelled`；`in_progress` → `blocked` | `done` | `cancelled`；`blocked` → `in_progress` | `done` | `cancelled`
 
+### `schedule.batch-upsert`
+
+原子写入多个任务或里程碑；全部校验通过后统一提交。基线字段只产生一次修订和一条变更记录。
+
+必填：`items`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `items` | `scheduleUpsertItemArray` | 是 |
+
+`scheduleUpsertItemArray` 的元素是计划批量写入对象：
+
+可用字段：`collection`、`record`
+
+必填：`collection`、`record`
+
+record 可用字段：`actual_end`、`actual_start`、`baseline_end`、`baseline_start`、`deliverable_ids`、`dependency_ids`、`evidence`、`forecast_end`、`forecast_start`、`id`、`next_action`、`owner`、`progress`、`requirement_ids`、`source_ids`、`status`、`title`、`updated_at`
+
+collection 为 tasks 或 milestones；新建 record 需要 title，更新 record 需要 id。一次调用中的记录 ID 不得重复。
+
+`task` 状态取值：`not_started`、`in_progress`、`blocked`、`done`、`cancelled`
+
+允许转换：`not_started` → `in_progress` | `blocked` | `cancelled`；`in_progress` → `blocked` | `done` | `cancelled`；`blocked` → `in_progress` | `done` | `cancelled`
+
 ### `schedule.baseline.approve`
 
-payload 为空对象；基线摘要由计划数据自动计算，需有效审批。
+payload 为空对象；只确认已填写的草拟基线，不接受 change_request_id。重复批准相同快照会安全返回 already_approved，不新增修订；需要按变更请求修改日期时使用 schedule.batch-upsert。
 
 payload 无字段（空对象）。
 
@@ -263,13 +299,21 @@ payload 无字段（空对象）。
 | `source_ids` | `stringArray` |  |
 | `created_at` | `timestamp` |  |
 
+`changeItems` 的元素是逐项 before/after 对象：
+
+可用字段：`target_id`、`before`、`after`
+
+必填：`target_id`、`before`、`after`
+
+target_id 为非空字符串且不得重复；before 与 after 必须是对象。每个 target_id 一条。
+
 `change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`implemented`
 
 允许转换：`proposed` → `impact_review` | `approved` | `rejected`；`impact_review` → `approved` | `rejected`；`approved` → `implemented`
 
 ### `change.approve`
 
-批准后摘要锁定，实际写入必须逐项一致。
+批准后摘要锁定，实际写入必须逐项一致；approved_at 不得早于变更请求 created_at，同一 workflow 中建议显式使用递增时间戳。
 
 必填：`id`
 
@@ -484,3 +528,11 @@ operations 按依赖顺序排列；不支持嵌套工作流。
 |---|---|---|
 | `kind` | `string` | 是 |
 | `operations` | `operationArray` | 是 |
+
+`operationArray` 的元素是工作流步骤对象：
+
+可用字段：`approval`、`payload`、`reason`、`source_ids`、`type`
+
+必填：`type`、`payload`
+
+reason、source_ids、approval 省略时继承外层信封；不支持嵌套 workflow.apply。

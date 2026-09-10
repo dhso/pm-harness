@@ -237,52 +237,75 @@ export async function recordOperation(root, input, options = {}) {
     changedStores.add("activity");
     resultIds.push(record.id);
     result = { activity: record };
-  } else if (envelope.type === "schedule.upsert") {
-    const collection = envelope.payload.collection;
-    if (!["tasks", "milestones"].includes(collection)) throw new Error("schedule.upsert payload.collection must be tasks or milestones");
-    const kind = collection === "tasks" ? "task" : "milestone";
-    const records = data.schedule[collection];
-    const payload = envelope.payload.record || envelope.payload;
-    const existing = payload.id ? records.find((item) => item.id === payload.id) : null;
-    const record = defaultScheduleRecord({ ...existing, ...payload, source_ids: payload.source_ids ?? existing?.source_ids ?? envelope.source_ids }, kind, now);
-    record.id ||= nextId(records, kind);
-    delete record._kind;
-    if (existing) assertTransition(kind, existing.status, record.status, record.id);
-    const baselineChanged = !sameBaseline(existing, record);
+  } else if (["schedule.upsert", "schedule.batch-upsert"].includes(envelope.type)) {
+    const batch = envelope.type === "schedule.batch-upsert";
+    const inputs = batch ? envelope.payload.items : [{ collection: envelope.payload.collection, record: envelope.payload.record || envelope.payload }];
+    const stagedSchedule = clone(data.schedule);
+    const prepared = [];
+    const seenIds = new Set();
+    for (const input of inputs) {
+      const collection = input.collection;
+      if (!["tasks", "milestones"].includes(collection)) throw new Error(JSON.stringify({ code: "invalid_schedule_collection", collection, fix: "Use collection: tasks or milestones" }));
+      const kind = collection === "tasks" ? "task" : "milestone";
+      const records = stagedSchedule[collection];
+      const payload = input.record;
+      const existing = payload.id ? records.find((item) => item.id === payload.id) : null;
+      const record = defaultScheduleRecord({ ...existing, ...payload, source_ids: payload.source_ids ?? existing?.source_ids ?? envelope.source_ids }, kind, now);
+      record.id ||= nextId(records, kind);
+      delete record._kind;
+      if (seenIds.has(record.id)) throw new Error(JSON.stringify({ code: "duplicate_schedule_target", id: record.id, fix: "Each record ID may appear only once in schedule.batch-upsert" }));
+      seenIds.add(record.id);
+      if (existing) assertTransition(kind, existing.status, record.status, record.id);
+      validateOrThrow(kind, record);
+      prepared.push({ collection, existing, record, baselineChanged: !sameBaseline(existing, record) });
+      upsert(records, record);
+    }
+    const baselineChanges = prepared.filter((item) => item.baselineChanged);
     const approvedBaseline = data.schedule.baseline?.status === "approved";
+    if (approvedBaseline && data.schedule.baseline.digest !== baselineDigest(data.schedule)) throw new Error(JSON.stringify({ code: "approved_baseline_drift", fix: "已批准基线与摘要不一致；先恢复直接编辑，再通过已批准的变更请求写入" }));
     const usesChangeRequest = Boolean(envelope.approval?.change_request_id);
-    const actualChanges = [exactChange(record.id, existing, record, ["baseline_start", "baseline_end"])];
+    const targetIds = baselineChanges.map((item) => item.record.id);
+    const actualChanges = baselineChanges.map((item) => exactChange(item.record.id, item.existing, item.record, ["baseline_start", "baseline_end"]));
     let baselineApproval = null;
-    if (baselineChanged && (approvedBaseline || usesChangeRequest)) baselineApproval = verifyApproval(data, envelope.approval, "schedule_baseline", { requireChangeRequest: true, targetIds: [record.id], actualChanges });
-    else if (baselineChanged && envelope.approval) baselineApproval = verifyApproval(data, envelope.approval, "schedule_baseline");
-    validateOrThrow(kind, record);
+    if (baselineChanges.length && (approvedBaseline || usesChangeRequest)) baselineApproval = verifyApproval(data, envelope.approval, "schedule_baseline", { requireChangeRequest: true, targetIds, actualChanges });
+    else if (baselineChanges.length && envelope.approval) baselineApproval = verifyApproval(data, envelope.approval, "schedule_baseline");
     const before = baselineSnapshot(data.schedule);
-    upsert(records, record);
-    if (baselineChanged && envelope.approval) {
+    data.schedule = stagedSchedule;
+    if (baselineChanges.length && envelope.approval) {
       const revision = Number(data.schedule.baseline?.revision || 0) + 1;
       const after = baselineSnapshot(data.schedule);
-      const digest = baselineDigest(data.schedule);
-      data.schedule.baseline = { revision, status: "approved", digest, approved_by_id: baselineApproval.stakeholder.id, approved_at: baselineApproval.changeRequest?.effective_at || envelope.approval.approved_at, change_request_id: envelope.approval.change_request_id || null };
-      addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: [record.id], before, after, before_summary: existing ? "修改已批准基线" : "批准初始基线", after_summary: `${record.baseline_start || "—"} → ${record.baseline_end || "—"}`, baseline_revision: revision });
+      const changeRequestId = envelope.approval.change_request_id || null;
+      data.schedule.baseline = { revision, status: "approved", digest: digestValue(after), approved_by_id: baselineApproval.stakeholder.id, approved_at: baselineApproval.changeRequest?.effective_at || envelope.approval.approved_at, change_request_id: changeRequestId };
+      addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: targetIds, before, after, before_summary: approvedBaseline ? "修改已批准基线" : "批准初始基线", after_summary: `${targetIds.length} 个条目已按批准基线落地`, baseline_revision: revision });
       changedStores.add("changes");
       if (approvedBaseline || usesChangeRequest) changedStores.add("requirements");
-    } else if (baselineChanged) {
+    } else if (baselineChanges.length) {
       data.schedule.baseline = { ...(data.schedule.baseline || {}), revision: Number(data.schedule.baseline?.revision || 0), status: data.schedule.baseline?.status || "draft", digest: baselineDigest(data.schedule), approved_by_id: null, approved_at: null, change_request_id: null };
     }
     changedStores.add("schedule");
-    resultIds.push(record.id);
-    result = { schedule_item: record, baseline: data.schedule.baseline };
+    resultIds.push(...prepared.map((item) => item.record.id));
+    result = batch ? { schedule_items: prepared.map((item) => item.record), baseline: data.schedule.baseline } : { schedule_item: prepared[0].record, baseline: data.schedule.baseline };
   } else if (envelope.type === "schedule.baseline.approve") {
-    const approval = verifyApproval(data, envelope.approval, "schedule_baseline");
+    if (envelope.approval?.change_request_id) throw new Error(JSON.stringify({ code: "baseline_confirmation_does_not_apply_change_request", fix: "schedule.baseline.approve 只确认已填写的草拟基线；需要按变更请求修改日期时使用 schedule.batch-upsert" }));
     const snapshot = baselineSnapshot(data.schedule);
+    // 空快照与"批准了一个空对象"在哈希上无法区分，必须在入口拒绝。
+    if (!snapshot.milestones.length && !snapshot.tasks.length) throw new Error(JSON.stringify({ code: "baseline_empty", fix: "先为任务或里程碑写入 baseline_start/baseline_end，再批准基线" }));
     const after = baselineDigest(data.schedule);
-    const revision = Number(data.schedule.baseline?.revision || 0) + 1;
-    data.schedule.baseline = { revision, status: "approved", digest: after, approved_by_id: approval.stakeholder.id, approved_at: envelope.approval.approved_at, change_request_id: envelope.approval.change_request_id || null };
-    addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: [...data.schedule.milestones, ...data.schedule.tasks].map((item) => item.id), before: snapshot, after: snapshot, before_summary: "确认草拟基线", after_summary: "基线已批准", baseline_revision: revision });
-    changedStores.add("schedule");
-    changedStores.add("changes");
-    resultIds.push(...[...data.schedule.milestones, ...data.schedule.tasks].map((item) => item.id));
-    result = { baseline: data.schedule.baseline };
+    const targetIds = [...data.schedule.milestones, ...data.schedule.tasks].filter((item) => item.baseline_start || item.baseline_end).map((item) => item.id);
+    if (data.schedule.baseline?.status === "approved") {
+      if (data.schedule.baseline.digest !== after) throw new Error(JSON.stringify({ code: "approved_baseline_drift", fix: "已批准基线与摘要不一致；不能通过重新批准覆盖直接编辑，请恢复后走变更请求" }));
+      resultIds.push(...targetIds);
+      result = { baseline: data.schedule.baseline, already_approved: true };
+    } else {
+      const approval = verifyApproval(data, envelope.approval, "schedule_baseline");
+      const revision = Number(data.schedule.baseline?.revision || 0) + 1;
+      data.schedule.baseline = { revision, status: "approved", digest: after, approved_by_id: approval.stakeholder.id, approved_at: envelope.approval.approved_at, change_request_id: envelope.approval.change_request_id || null };
+      addControlledChange(data, envelope, { kind: "schedule_baseline", target_ids: targetIds, before: snapshot, after: snapshot, before_summary: "确认草拟基线", after_summary: "基线已批准", baseline_revision: revision });
+      changedStores.add("schedule");
+      changedStores.add("changes");
+      resultIds.push(...targetIds);
+      result = { baseline: data.schedule.baseline, already_approved: false };
+    }
   } else if (envelope.type === "requirement.upsert") {
     const payload = envelope.payload;
     const existing = payload.id ? data.requirements.requirements.find((item) => item.id === payload.id) : null;
@@ -350,7 +373,7 @@ export async function recordOperation(root, input, options = {}) {
     const targetIds = normalizeArray(payload.target_ids);
     const changeItems = Array.isArray(payload.change_items) ? payload.change_items : [];
     if (!targetIds.length || targetIds.length !== changeItems.length || targetIds.some((id) => !changeItems.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_items_mismatch", fix: "Provide one exact before/after change_item for every target_id" }));
-    if (changeItems.some((item) => digestValue(item.before) === digestValue(item.after))) throw new Error(JSON.stringify({ code: "change_request_no_effect" }));
+    if (changeItems.some((item) => digestValue(item.before) === digestValue(item.after))) throw new Error(JSON.stringify({ code: "change_request_no_effect", fix: "change_items 的 before 与 after 完全相同；变更请求必须描述真实改动" }));
     const record = { id: payload.id || nextId(data.requirements.change_requests, "change_request"), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: normalizeArray(payload.source_ids || envelope.source_ids), created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
     validateOrThrow("change_request", record);
     data.requirements.change_requests.push(record);
@@ -361,9 +384,9 @@ export async function recordOperation(root, input, options = {}) {
     const record = data.requirements.change_requests.find((item) => item.id === envelope.payload.id);
     if (!record) throw new Error(`Change request not found: ${envelope.payload.id}`);
     assertTransition("change_request", record.status, "approved", record.id);
-    if (!record.change_items?.length || record.target_ids.some((id) => !record.change_items.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_exact_change_required", id: record.id }));
+    if (!record.change_items?.length || record.target_ids.some((id) => !record.change_items.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_exact_change_required", id: record.id, fix: "批准前每个 target_id 都需要一条 change_items: [{ target_id, before, after }]" }));
     const approval = verifyApproval(data, envelope.approval, record.approval_scope);
-    if (Date.parse(envelope.approval.approved_at) < Date.parse(record.created_at)) throw new Error(JSON.stringify({ code: "approval_predates_change_request", id: record.id }));
+    if (Date.parse(envelope.approval.approved_at) < Date.parse(record.created_at)) throw new Error(JSON.stringify({ code: "approval_predates_change_request", id: record.id, created_at: record.created_at, approved_at: envelope.approval.approved_at, fix: "approval.approved_at 不得早于变更请求的 created_at；同一 workflow 中请显式设置相同或递增的时间戳" }));
     const before = clone(record);
     Object.assign(record, { status: "approved", approved_by_id: approval.stakeholder.id, confirmed_by_user_at: envelope.approval.confirmed_by_user_at, effective_at: envelope.approval.approved_at, approved_change_digest: digestValue(record.change_items) });
     addControlledChange(data, envelope, { kind: "change_request_approval", target_ids: [record.id], before, after: record, before_summary: before.status, after_summary: "approved" });

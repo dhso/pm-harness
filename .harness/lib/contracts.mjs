@@ -14,6 +14,7 @@ const mergedFieldTypes = (...kinds) => {
 };
 const scheduleFields = [...new Set([...fields("task"), ...fields("milestone")])];
 const registerFields = [...new Set([...fields("risk"), ...fields("issue"), ...fields("decision")])];
+const WORKFLOW_STEP_FIELDS = new Set(["type", "reason", "source_ids", "approval", "payload"]);
 
 const PROJECT_FIELD_TYPES = Object.freeze({
   id: "string",
@@ -64,7 +65,13 @@ export const OPERATION_SPECS = Object.freeze({
     status_kinds: ["task"],
     note: "记录字段可平铺或放入 record；create/update 必填字段指记录本身。",
   },
-  "schedule.baseline.approve": { fields: {}, note: "payload 为空对象；基线摘要由计划数据自动计算，需有效审批。" },
+  "schedule.batch-upsert": {
+    fields: { items: "scheduleUpsertItemArray" },
+    required: ["items"],
+    status_kinds: ["task"],
+    note: "原子写入多个任务或里程碑；全部校验通过后统一提交。基线字段只产生一次修订和一条变更记录。",
+  },
+  "schedule.baseline.approve": { fields: {}, note: "payload 为空对象；只确认已填写的草拟基线，不接受 change_request_id。重复批准相同快照会安全返回 already_approved，不新增修订；需要按变更请求修改日期时使用 schedule.batch-upsert。" },
   "requirement.upsert": {
     fields: fieldTypes("requirement"),
     create_required: ["title", "description"],
@@ -88,7 +95,7 @@ export const OPERATION_SPECS = Object.freeze({
     status_kinds: ["change_request"],
     note: "每个 target_id 必须有一条 change_items: [{ target_id, before, after }]。",
   },
-  "change.approve": { fields: { id: "string" }, required: ["id"], status_kinds: ["change_request"], note: "批准后摘要锁定，实际写入必须逐项一致。" },
+  "change.approve": { fields: { id: "string" }, required: ["id"], status_kinds: ["change_request"], note: "批准后摘要锁定，实际写入必须逐项一致；approved_at 不得早于变更请求 created_at，同一 workflow 中建议显式使用递增时间戳。" },
   "inbox.transition": {
     fields: Object.fromEntries(Object.entries(fieldTypes("inbox")).filter(([field]) => ["id", "status", "applied_to_ids", "applied_at", "disposition_reason"].includes(field))),
     required: ["id", "status"],
@@ -133,8 +140,37 @@ export const PAYLOAD_FIELDS = Object.freeze(Object.fromEntries(Object.entries(OP
 
 const INBOX_ITEM_FIELDS = new Set(fields("inbox").filter((field) => !["id", "source_id", "created_at"].includes(field)));
 const APPROVAL_FIELDS = new Set(["approved_by_id", "approved_at", "confirmed_by_user_at", "change_request_id"]);
+// 复合类型同时驱动嵌套校验、契约命令和参考文档，避免三处字段定义漂移。
+export const COMPOSITE_TYPES = Object.freeze({
+  inboxItemArray: {
+    element: "收件箱条目对象",
+    fields: () => [...INBOX_ITEM_FIELDS].sort(),
+    required: ["classification", "summary"],
+    defaults: ["authority", "status", "related_ids", "applied_to_ids"],
+    generated: ["id", "source_id", "created_at"],
+    note: "authority 默认为 unknown，status 默认为 new；id、source_id、created_at 由 Harness 补全，传入会被拒。",
+  },
+  changeItems: {
+    element: "逐项 before/after 对象",
+    fields: () => ["target_id", "before", "after"],
+    required: ["target_id", "before", "after"],
+    note: "target_id 为非空字符串且不得重复；before 与 after 必须是对象。每个 target_id 一条。",
+  },
+  operationArray: {
+    element: "工作流步骤对象",
+    fields: () => [...WORKFLOW_STEP_FIELDS].sort(),
+    required: ["type", "payload"],
+    note: "reason、source_ids、approval 省略时继承外层信封；不支持嵌套 workflow.apply。",
+  },
+  scheduleUpsertItemArray: {
+    element: "计划批量写入对象",
+    fields: () => ["collection", "record"],
+    required: ["collection", "record"],
+    record_fields: () => [...scheduleFields].sort(),
+    note: "collection 为 tasks 或 milestones；新建 record 需要 title，更新 record 需要 id。一次调用中的记录 ID 不得重复。",
+  },
+});
 const ACTOR_FIELDS = new Set(["kind", "id", "name"]);
-const WORKFLOW_STEP_FIELDS = new Set(["type", "reason", "source_ids", "approval", "payload"]);
 const STORE_SHAPES = Object.freeze({
   config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint", "archive_roots"]],
   project: ["project/project.json", ["schema_version", "initialized", "id", "name", "status", "timezone", "objective", "scope_in", "scope_out", "success_criteria", "constraints", "budget", "created_at", "updated_at"]],
@@ -216,8 +252,33 @@ export function validateOperationContract(envelope) {
     unknownFields(envelope.payload, new Set(allowed), "payload.", issues);
     requiredFields(envelope.payload, spec, "payload.", issues);
   }
-  if (envelope.type === "source.register" && Array.isArray(envelope.payload?.items)) {
-    envelope.payload.items.forEach((item, index) => unknownFields(item, INBOX_ITEM_FIELDS, `payload.items[${index}].`, issues));
+  if (envelope.type === "source.register" && envelope.payload?.items !== undefined && !Array.isArray(envelope.payload.items)) {
+    issues.push({ code: "invalid_inbox_items", field: "payload.items", message: "payload.items must be an array", fix: "Provide items: [{ classification, summary }] or omit items" });
+  } else if (envelope.type === "source.register" && Array.isArray(envelope.payload?.items)) {
+    const composite = COMPOSITE_TYPES.inboxItemArray;
+    envelope.payload.items.forEach((item, index) => {
+      const prefix = `payload.items[${index}].`;
+      if (!isPlainObject(item)) issues.push({ code: "invalid_inbox_item", field: prefix.slice(0, -1), message: "Inbox item must be an object" });
+      else {
+        unknownFields(item, new Set(composite.fields()), prefix, issues);
+        requiredFields(item, { fields: Object.fromEntries(composite.fields().map((field) => [field, RECORD_MODELS.inbox.fields[field] || "string"])), required: composite.required }, prefix, issues);
+      }
+    });
+  }
+  if (envelope.type === "schedule.batch-upsert") {
+    const composite = COMPOSITE_TYPES.scheduleUpsertItemArray;
+    if (!Array.isArray(envelope.payload?.items) || !envelope.payload.items.length) {
+      issues.push({ code: "invalid_schedule_batch", field: "payload.items", message: "schedule.batch-upsert requires at least one item", fix: "Provide items: [{ collection: 'tasks' | 'milestones', record: { ... } }]" });
+    } else envelope.payload.items.forEach((item, index) => {
+      const prefix = `payload.items[${index}].`;
+      if (!isPlainObject(item)) issues.push({ code: "invalid_schedule_batch_item", field: prefix.slice(0, -1), message: "Batch item must be an object" });
+      else {
+        unknownFields(item, new Set(composite.fields()), prefix, issues);
+        requiredFields(item, { fields: { collection: "tasks | milestones", record: "object" }, required: composite.required }, prefix, issues);
+        if (item.record !== undefined && !isPlainObject(item.record)) issues.push({ code: "invalid_record", field: `${prefix}record`, message: `${prefix}record must be an object` });
+        else if (isPlainObject(item.record)) unknownFields(item.record, new Set(scheduleFields), `${prefix}record.`, issues);
+      }
+    });
   }
   for (const type of ["schedule.upsert", "register.upsert"]) {
     if (envelope.type === type && envelope.payload?.record !== undefined && !isPlainObject(envelope.payload.record)) {
