@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { canTransition, nextId } from "./model.mjs";
+import { assertTransition, nextId } from "./model.mjs";
 import { clone, digestFields, exactChange, isWorkspaceRelativePath, normalizeArray, replacementChange, safeWikiPath, sha256Path, upsert, validateOrThrow } from "./helpers.mjs";
 import { DELIVERABLE_CONTROLLED_FIELDS, DELIVERABLE_IMMUTABLE_FIELDS } from "./workspace.mjs";
 import { addControlledChange, assertUserConfirmation, verifyApproval } from "./approval.mjs";
@@ -9,7 +9,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
   if (envelope.type === "inbox.transition") {
     const item = data.inbox.items.find((candidate) => candidate.id === envelope.payload.id);
     if (!item) throw new Error(`Inbox item not found: ${envelope.payload.id}`);
-    if (!canTransition("inbox", item.status, envelope.payload.status)) throw new Error(`Invalid inbox transition: ${item.status} -> ${envelope.payload.status}`);
+    assertTransition("inbox", item.status, envelope.payload.status, item.id);
     Object.assign(item, { status: envelope.payload.status, applied_to_ids: normalizeArray(envelope.payload.applied_to_ids), applied_at: envelope.payload.applied_at ?? (envelope.payload.status === "applied" ? now : null), disposition_reason: envelope.payload.disposition_reason ?? null });
     validateOrThrow("inbox", item);
     changedStores.add("inbox");
@@ -23,7 +23,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     const record = envelope.type === "deliverable.transition" ? { ...existing, ...payload } : { ...existing, ...payload, id: payload.id || nextId(data.deliverables.deliverables, "deliverable"), status: payload.status || existing?.status || "requested" };
     for (const field of ["requirement_ids", "source_ids", "acceptance_criteria", "reviewers"]) record[field] = normalizeArray(record[field] || (field === "source_ids" ? envelope.source_ids : []));
     for (const field of ["path", "content_sha256", "due_at", "completed_at", "approved_by_id", "approved_at", "delivered_at", "accepted_by_id", "accepted_at", "acceptance_evidence", "supersedes_id", "superseded_by_id"]) if (!(field in record)) record[field] = null;
-    if (existing && !canTransition("deliverable", existing.status, record.status)) throw new Error(`Invalid deliverable transition: ${existing.status} -> ${record.status}`);
+    if (existing) assertTransition("deliverable", existing.status, record.status, record.id);
     const existingApproved = existing && ["approved", "delivered", "accepted"].includes(existing.status);
     if (existingApproved && digestFields(existing, DELIVERABLE_IMMUTABLE_FIELDS) !== digestFields(record, DELIVERABLE_IMMUTABLE_FIELDS)) throw new Error(JSON.stringify({ code: "approved_deliverable_requires_new_version", id: record.id, fix: "Create a new DEL version; do not overwrite approved content or metadata" }));
     const supersessionChanged = existingApproved && digestFields(existing, ["supersedes_id", "superseded_by_id"]) !== digestFields(record, ["supersedes_id", "superseded_by_id"]);
@@ -43,7 +43,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
       record.approved_by_id = approval.stakeholder.id;
       record.approved_at = approval.changeRequest?.effective_at || envelope.approval.approved_at;
       if (predecessor) {
-        if (!canTransition("deliverable", predecessor.status, "superseded")) throw new Error(`Invalid predecessor transition: ${predecessor.status} -> superseded`);
+        assertTransition("deliverable", predecessor.status, "superseded", predecessor.id);
         Object.assign(predecessor, { status: "superseded", superseded_by_id: record.id });
         validateOrThrow("deliverable", predecessor);
       }
@@ -71,7 +71,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     const payload = envelope.payload;
     const existing = payload.id ? data.catalog.pages.find((item) => item.id === payload.id) : null;
     const record = { ...existing, id: payload.id || nextId(data.catalog.pages, "wiki"), title: payload.title ?? existing?.title, path: safeWikiPath(payload.path ?? existing?.path), status: payload.status || existing?.status || "active", source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), related_ids: normalizeArray(payload.related_ids ?? existing?.related_ids), owner: payload.owner ?? existing?.owner ?? null, last_reviewed_at: payload.last_reviewed_at ?? existing?.last_reviewed_at ?? now, review_due_at: payload.review_due_at ?? existing?.review_due_at ?? null, supersedes_id: payload.supersedes_id ?? existing?.supersedes_id ?? null, superseded_by_id: payload.superseded_by_id ?? existing?.superseded_by_id ?? null };
-    if (existing && !canTransition("wiki", existing.status, record.status)) throw new Error(`Invalid Wiki transition: ${existing.status} -> ${record.status}`);
+    if (existing) assertTransition("wiki", existing.status, record.status, record.id);
     validateOrThrow("wiki", record);
     upsert(data.catalog.pages, record);
     if (typeof payload.content === "string") extraEntries.push({ path: record.path, content: payload.content.endsWith("\n") ? payload.content : `${payload.content}\n` });
@@ -111,7 +111,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     if (!proposal || !["proposed", "approved"].includes(proposal.status)) throw new Error(`Rule proposal cannot be activated: ${envelope.payload.id}`);
     const before = clone(proposal);
     if (proposal.status === "proposed") Object.assign(proposal, { status: "approved", approved_by: "user", approved_at: envelope.approval.confirmed_by_user_at });
-    if (!canTransition("proposal", proposal.status, "active")) throw new Error(`Rule proposal cannot be activated from ${proposal.status}`);
+    assertTransition("proposal", proposal.status, "active", proposal.id);
     Object.assign(proposal, { status: "active", effective_at: envelope.approval.confirmed_by_user_at });
     const rule = { id: proposal.id, text: proposal.proposed_rule, scope: proposal.scope, status: "active", proposal_id: proposal.id, effective_at: proposal.effective_at, review_at: proposal.review_at, retired_at: null, pattern_key: proposal.pattern_key ?? null };
     validateOrThrow("rule", rule);

@@ -9,8 +9,10 @@
   "scripts": {
     "rebuild": "node .harness/scripts/harness.mjs rebuild",
     "lint": "node .harness/scripts/harness.mjs lint",
+    "lint:fast": "node .harness/scripts/harness.mjs lint --fast",
     "brief": "node .harness/scripts/harness.mjs brief",
     "maintain": "node .harness/scripts/harness.mjs maintain",
+    "docs:contract": "node .harness/scripts/harness.mjs docs-contract",
     "test": "node --test"
   }
 }

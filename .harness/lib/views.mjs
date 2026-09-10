@@ -108,6 +108,8 @@ export function renderActivityIndex(activity, timezone) {
 function groupActivities(entries, timezone) {
   const groups = new Map();
   for (const item of entries) {
+    // 缺失或非法 occurred_at 交由 lint 报告为结构化问题；此处跳过，避免渲染视图时抛出。
+    if (!item?.occurred_at || Number.isNaN(Date.parse(item.occurred_at))) continue;
     const date = localDate(timezone, new Date(item.occurred_at));
     if (!groups.has(date)) groups.set(date, []);
     groups.get(date).push(item);

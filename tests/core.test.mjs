@@ -7,14 +7,17 @@ import path from "node:path";
 import test from "node:test";
 import {
   buildDailyBrief,
+  describeOperationContract,
   lintWorkspace,
   maintainWorkspace,
+  queryWorkspace,
   readJson,
   rebuildWorkspace,
   recordOperation,
+  renderOperationContract,
   renderGantt,
 } from "../.harness/lib/core.mjs";
-import { SCHEMA_VERSION } from "../.harness/lib/model.mjs";
+import { nearestName, OPERATION_TYPES, SCHEMA_VERSION } from "../.harness/lib/model.mjs";
 import { commitTransaction } from "../.harness/lib/transaction.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
@@ -32,6 +35,15 @@ async function writeJsonFixture(root, relative, value) {
   const target = path.join(root, relative);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function rejection(promise) {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected the operation to fail");
 }
 
 let operationSequence = 0;
@@ -455,7 +467,7 @@ test("Git keeps the necessary set, excludes raw archives, and flags forced archi
   assert.ok(codes.includes("secret_file_tracked"));
 });
 
-test("agent-only CLI exposes record, brief, maintain, and structured errors", async () => {
+test("agent-only CLI exposes record, contract discovery, brief, maintain, and structured errors", async () => {
   const root = await workspace();
   const inputPath = path.join(root, ".harness/tmp/operation.json");
   await mkdir(path.dirname(inputPath), { recursive: true });
@@ -463,6 +475,9 @@ test("agent-only CLI exposes record, brief, maintain, and structured errors", as
   const script = path.join(root, ".harness/scripts/harness.mjs");
   const recorded = JSON.parse(execFileSync(process.execPath, [script, "record", "--input", inputPath], { cwd: root, encoding: "utf8" }));
   assert.equal(recorded.ok, true);
+  const contract = JSON.parse(execFileSync(process.execPath, [script, "contract", "activity.record", "--compact"], { cwd: root, encoding: "utf8" }));
+  assert.deepEqual(contract.required, ["action", "outcome"]);
+  assert.equal(contract.fields.occurred_at, "timestamp");
   const brief = JSON.parse(execFileSync(process.execPath, [script, "brief", "--json"], { cwd: root, encoding: "utf8" }));
   assert.equal(brief.project, "CLI project");
   const maintained = JSON.parse(execFileSync(process.execPath, [script, "maintain"], { cwd: root, encoding: "utf8" }));
@@ -502,4 +517,189 @@ test("complete workflow covers intake, change approval, planning, activity, deli
   assert.ok(brief.recent_activity.length >= 1);
   assert.ok(brief.top_actions.length <= 3);
   assert.equal(lint.ok, true, JSON.stringify(lint.issues, null, 2));
+});
+
+test("unknown fields, operation types, and statuses report candidates and a fix", async () => {
+  const root = await workspace();
+  await initialize(root, "Self-describing errors");
+  const misspelled = await rejection(recordOperation(root, operation("activity.record", { occured_at: "2026-09-10T04:00:00Z", action: "a", outcome: "b", related_ids: [], source_ids: [] })));
+  const fieldIssue = JSON.parse(misspelled.message).issues.find((item) => item.field === "payload.occured_at");
+  assert.equal(fieldIssue.code, "unknown_field");
+  assert.equal(fieldIssue.did_you_mean, "payload.occurred_at");
+  assert.ok(fieldIssue.supported_fields.includes("occurred_at"));
+  assert.ok(fieldIssue.fix.includes("occurred_at"));
+
+  const badType = await rejection(recordOperation(root, { ...operation("activity.record", {}), type: "activty.record" }));
+  const typeIssue = JSON.parse(badType.message).issues.find((item) => item.code === "invalid_operation_type");
+  assert.equal(typeIssue.did_you_mean, "activity.record");
+  assert.ok(typeIssue.supported_types.includes("activity.record"));
+});
+
+test("missing required fields report expected type and the full required set", async () => {
+  const root = await workspace();
+  await initialize(root, "Missing fields");
+  const failure = await rejection(recordOperation(root, operation("activity.record", { action: "no timestamps" })));
+  const issues = JSON.parse(failure.message).issues;
+  const missing = issues.find((item) => item.code === "missing_field" && item.field === "payload.outcome");
+  assert.ok(missing, JSON.stringify(issues, null, 2));
+  assert.equal(missing.expected_type, "string");
+  assert.deepEqual(missing.required_fields, ["action", "outcome"]);
+});
+
+test("query reads only its target store, validates fields, and supports singleton project lookup", async () => {
+  const root = await workspace();
+  await initialize(root, "Query");
+  const blocked = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Blocked work", status: "blocked", owner: "PM" }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Open work", status: "not_started", owner: "PM" }));
+
+  const byId = await queryWorkspace(root, { id: blocked.schedule_item.id, fields: ["title", "status"] });
+  assert.equal(byId.collection, "task");
+  assert.deepEqual(byId.record, { title: "Blocked work", status: "blocked" });
+
+  const filtered = await queryWorkspace(root, { target: "tasks", filters: { status: "blocked" } });
+  assert.equal(filtered.count, 1);
+  assert.equal(filtered.records[0].id, blocked.schedule_item.id);
+
+  const limited = await queryWorkspace(root, { target: "task", limit: 1 });
+  assert.equal(limited.count, 2);
+  assert.equal(limited.truncated, true);
+  assert.equal(limited.records.length, 1);
+
+  const project = await queryWorkspace(root, { id: "PRJ-001", fields: ["name", "status"] });
+  assert.deepEqual(project.record, { name: "Query", status: "active" });
+
+  const badFilter = JSON.parse((await rejection(queryWorkspace(root, { target: "tasks", filters: { stats: "blocked" } }))).message);
+  assert.equal(badFilter.code, "unknown_query_field");
+  assert.equal(badFilter.did_you_mean, "status");
+  const badProjection = JSON.parse((await rejection(queryWorkspace(root, { target: "tasks", fields: ["titel"] }))).message);
+  assert.equal(badProjection.did_you_mean, "title");
+
+  // 破坏无关事实源后仍能查询任务，证明 query 没有退回整库读取。
+  await writeFile(path.join(root, ".harness/config.json"), "not-json\n", "utf8");
+  assert.equal((await queryWorkspace(root, { id: blocked.schedule_item.id })).record.title, "Blocked work");
+
+  const unknown = await rejection(queryWorkspace(root, { target: "taks" }));
+  assert.equal(JSON.parse(unknown.message).did_you_mean, "tasks");
+  await assert.rejects(queryWorkspace(root, { id: "ZZZ-001" }), (error) => JSON.parse(error.message).code === "unknown_id_prefix");
+});
+
+test("fast lint skips only content hashing and still checks contracts and Wiki registration", async () => {
+  const root = await workspace();
+  await initialize(root, "Fast lint");
+  const full = await lintWorkspace(root);
+  const fast = await lintWorkspace(root, { fast: true });
+  assert.equal(full.mode, "full");
+  assert.equal(fast.mode, "fast");
+  assert.deepEqual(fast.skipped_checks, ["file_content_hash"]);
+  assert.equal(fast.ok, true, JSON.stringify(fast.issues, null, 2));
+
+  await writeFile(path.join(root, "knowledge/wiki/unregistered.md"), "# Unregistered\n", "utf8");
+  const unregistered = await lintWorkspace(root, { fast: true });
+  assert.ok(unregistered.issues.some((item) => item.code === "wiki_not_registered"));
+  await unlink(path.join(root, "knowledge/wiki/unregistered.md"));
+
+  await writeJsonFixture(root, "activity/log.json", { schema_version: SCHEMA_VERSION, entries: [{ id: "ACT-001" }] });
+  const broken = await lintWorkspace(root, { fast: true });
+  assert.equal(broken.ok, false);
+});
+
+test("generated contract reference stays in sync with the executable contract", async () => {
+  const generated = renderOperationContract();
+  for (const type of OPERATION_TYPES) assert.ok(generated.includes(`### \`${type}\``), `missing section for ${type}`);
+  assert.ok(generated.includes("必填：`action`、`outcome`"));
+  assert.ok(generated.includes("可省略并由 Harness 补全：`id`、`occurred_at`"));
+  assert.ok(generated.includes("必填：`id`、`status`"), "transition operations require only id and status");
+  assert.deepEqual(describeOperationContract("project.initialize").required, ["name", "timezone", "objective"]);
+  assert.deepEqual(describeOperationContract("schedule.upsert").create_required, ["title"]);
+  assert.ok(describeOperationContract("schedule.upsert").statuses.task.transitions.not_started.includes("in_progress"));
+  const committed = await readFile(path.join(repositoryRoot, ".harness/references/operation-contract.md"), "utf8");
+  assert.equal(committed, generated, "Run npm run docs:contract after changing model.mjs or contracts.mjs");
+});
+
+test("field suggestions fire on real typos and stay silent on unrelated names", async () => {
+  const activityFields = ["id", "occurred_at", "action", "outcome", "related_ids", "source_ids", "evidence", "next_action", "recorded_at", "timestamp"];
+  for (const [typo, expected] of [["occured_at", "occurred_at"], ["actoin", "action"], ["outcom", "outcome"], ["releated_ids", "related_ids"]]) {
+    assert.equal(nearestName(typo, activityFields), expected, `${typo} should suggest ${expected}`);
+  }
+  // 无关字段必须不给建议，否则报错会把调用方带偏。
+  for (const unrelated of ["kind", "title", "summary", "status", "owner", "type", "date", "x"]) {
+    assert.equal(nearestName(unrelated, activityFields), null, `${unrelated} should not get a suggestion`);
+  }
+  assert.equal(nearestName("foo.bar", OPERATION_TYPES), null);
+  assert.equal(nearestName("activty.record", OPERATION_TYPES), "activity.record");
+});
+
+test("dry-run previews record-level changes without writing anything", async () => {
+  const root = await workspace();
+  await initialize(root, "Dry run");
+  const operationsBefore = (await readJson(root, "governance/change-log.json")).operations.length;
+  const preview = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Preview task", owner: "PM", forecast_end: "2026-09-30" }), { dryRun: true });
+  assert.equal(preview.dry_run, true);
+  assert.equal(preview.committed, false);
+  assert.deepEqual(preview.changed_stores, ["changes", "schedule"]);
+  assert.ok(preview.would_write.includes("project/schedule.json"));
+  const created = preview.changes.find((item) => item.change === "created" && item.collection === "tasks");
+  assert.equal(created.after.title, "Preview task");
+
+  // 预演不得留下任何痕迹：既不写事实源，也不占用幂等表里的 operation_id。
+  const schedule = await readJson(root, "project/schedule.json");
+  assert.equal(schedule.tasks.length, 0);
+  const log = await readJson(root, "governance/change-log.json");
+  assert.equal(log.operations.length, operationsBefore, "dry-run must not append to the idempotency log");
+  assert.ok(!log.operations.some((item) => item.operation_id === preview.operation_id));
+});
+
+test("dry-run reports field-level before/after on updates", async () => {
+  const root = await workspace();
+  await initialize(root, "Dry run diff");
+  const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Shift me", owner: "PM", forecast_end: "2026-09-20" }));
+  const preview = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, forecast_end: "2026-09-27" } }), { dryRun: true });
+  const updated = preview.changes.find((item) => item.id === task.schedule_item.id);
+  assert.equal(updated.change, "updated");
+  assert.ok(updated.fields.includes("forecast_end"));
+  assert.equal(updated.before.forecast_end, "2026-09-20");
+  assert.equal(updated.after.forecast_end, "2026-09-27");
+  assert.equal((await readJson(root, "project/schedule.json")).tasks[0].forecast_end, "2026-09-20");
+});
+
+test("dry-run enforces approval and transition guardrails instead of bypassing them", async () => {
+  const root = await workspace();
+  await initialize(root, "Dry run guardrails");
+  // 受控字段缺审批时，预演必须与真实写入一样失败，绝不能成为绕过审批的旁路。
+  await assert.rejects(recordOperation(root, operation("project.update", { objective: "Silently changed" }), { dryRun: true }));
+
+  const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Closing", owner: "PM" }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "in_progress", actual_start: "2026-09-09" } }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "done", actual_end: "2026-09-10" } }));
+  await assert.rejects(recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "not_started" } }), { dryRun: true }));
+
+  // 预演过的 operation_id 之后仍可正常真实写入。
+  const envelope = operation("activity.record", { action: "Reused id", outcome: "Written for real", occurred_at: "2026-09-10T04:00:00Z", related_ids: [], source_ids: [], recorded_at: "2026-09-10T04:00:00Z" });
+  await recordOperation(root, envelope, { dryRun: true });
+  const real = await recordOperation(root, envelope);
+  assert.equal(real.idempotent, false);
+  assert.equal(real.ok, true);
+});
+
+test("invalid transitions return a structured error naming the legal targets", async () => {
+  const root = await workspace();
+  await initialize(root, "Transitions");
+  const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Close me", owner: "PM" }));
+  const skipped = await rejection(recordOperation(root, operation("deliverable.transition", { id: "DEL-404", status: "delivered" })));
+  assert.ok(skipped);
+
+  const forward = await rejection(recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "done", actual_end: "2026-09-10" } })));
+  const detail = JSON.parse(forward.message);
+  assert.equal(detail.code, "invalid_transition");
+  assert.equal(detail.kind, "task");
+  assert.equal(detail.from, "not_started");
+  assert.deepEqual(detail.allowed_targets, ["in_progress", "blocked", "cancelled"]);
+  assert.ok(detail.fix.includes("in_progress"));
+
+  // 终态必须明确告知"另建后继记录"，而不是只说不允许。
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "in_progress", actual_start: "2026-09-09" } }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "done", actual_end: "2026-09-10" } }));
+  const reopened = JSON.parse((await rejection(recordOperation(root, operation("schedule.upsert", { collection: "tasks", record: { id: task.schedule_item.id, status: "not_started" } })))).message);
+  assert.deepEqual(reopened.allowed_targets, []);
+  assert.ok(reopened.fix.includes("terminal state"));
 });

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 
+import { nearestName } from "./suggest.mjs";
+
+export { editDistance, nearestName } from "./suggest.mjs";
+
 export const SCHEMA_VERSION = 1;
 
 export const STATUS = Object.freeze({
@@ -348,20 +352,30 @@ export function validateRecord(kind, record) {
   if (!spec) return [{ code: "unknown_record_kind", field: null, message: `Unknown record kind: ${kind}` }];
   if (!isPlainObject(record)) return [{ code: "invalid_record", field: null, message: `${kind} must be an object` }];
   const allowedFields = new Set(["id", ...Object.keys(spec.fields || {})]);
+  const supportedFields = [...allowedFields].sort();
   for (const field of Object.keys(record)) {
-    if (!allowedFields.has(field)) issues.push({ code: "unknown_field", field, message: `${record.id || kind} contains unsupported field: ${field}` });
+    if (allowedFields.has(field)) continue;
+    const suggestion = nearestName(field, allowedFields);
+    issues.push({
+      code: "unknown_field",
+      field,
+      message: `${record.id || kind} contains unsupported field: ${field}`,
+      ...(suggestion ? { did_you_mean: suggestion } : {}),
+      supported_fields: supportedFields,
+      fix: suggestion ? `Rename ${field} to ${suggestion}` : `Remove ${field} or replace it with one of: ${supportedFields.join(", ")}`,
+    });
   }
   const idPattern = ID_PATTERNS[spec.id];
-  if (!idPattern?.test(record.id || "")) issues.push({ code: "invalid_id", field: "id", message: `${kind} has invalid ID: ${record.id ?? "missing"}` });
+  if (!idPattern?.test(record.id || "")) issues.push({ code: "invalid_id", field: "id", message: `${kind} has invalid ID: ${record.id ?? "missing"}`, expected_pattern: String(idPattern), fix: `Use an ID matching ${idPattern}` });
   for (const field of spec.required || []) {
-    if (!(field in record) || record[field] === undefined) issues.push({ code: "missing_field", field, message: `${record.id || kind} is missing ${field}` });
+    if (!(field in record) || record[field] === undefined) issues.push({ code: "missing_field", field, message: `${record.id || kind} is missing ${field}`, expected_type: spec.fields?.[field] || "string", required_fields: [...(spec.required || [])] });
   }
   for (const [field, type] of Object.entries({ ...COMMON_ARRAY_FIELDS, ...(spec.fields || {}) })) {
     if (!(field in record) || record[field] === undefined) continue;
-    if (!matchesType(record[field], type)) issues.push({ code: "invalid_field", field, message: `${record.id || kind}: ${field} must be ${type}` });
+    if (!matchesType(record[field], type)) issues.push({ code: "invalid_field", field, message: `${record.id || kind}: ${field} must be ${type}`, expected_type: type });
   }
   if (spec.status && record.status !== undefined && !STATUS[spec.status].includes(record.status)) {
-    issues.push({ code: "invalid_status", field: "status", message: `${record.id || kind} has unsupported status: ${record.status}` });
+    issues.push({ code: "invalid_status", field: "status", message: `${record.id || kind} has unsupported status: ${record.status}`, supported_statuses: [...STATUS[spec.status]], fix: `Use one of: ${STATUS[spec.status].join(", ")}` });
   }
   return issues;
 }
@@ -370,10 +384,17 @@ export function validateOperationEnvelope(envelope) {
   const issues = [];
   if (!isPlainObject(envelope)) return [{ code: "invalid_operation", field: null, message: "Operation must be an object" }];
   const allowedFields = new Set(["schema_version", "operation_id", "type", "actor", "reason", "source_ids", "approval", "payload"]);
-  for (const field of Object.keys(envelope)) if (!allowedFields.has(field)) issues.push({ code: "unknown_field", field, message: `Operation contains unsupported field: ${field}` });
+  for (const field of Object.keys(envelope)) {
+    if (allowedFields.has(field)) continue;
+    const suggestion = nearestName(field, allowedFields);
+    issues.push({ code: "unknown_field", field, message: `Operation contains unsupported field: ${field}`, ...(suggestion ? { did_you_mean: suggestion } : {}), supported_fields: [...allowedFields].sort() });
+  }
   if (envelope.schema_version !== SCHEMA_VERSION) issues.push({ code: "schema_version", field: "schema_version", message: `Operation schema_version must be ${SCHEMA_VERSION}` });
   if (!ID_PATTERNS.operation.test(envelope.operation_id || "")) issues.push({ code: "invalid_operation_id", field: "operation_id", message: "operation_id must start with OP- and contain at least six stable characters" });
-  if (!OPERATION_TYPES.includes(envelope.type)) issues.push({ code: "invalid_operation_type", field: "type", message: `Unsupported operation type: ${envelope.type ?? "missing"}` });
+  if (!OPERATION_TYPES.includes(envelope.type)) {
+    const suggestion = envelope.type ? nearestName(String(envelope.type), OPERATION_TYPES) : null;
+    issues.push({ code: "invalid_operation_type", field: "type", message: `Unsupported operation type: ${envelope.type ?? "missing"}`, ...(suggestion ? { did_you_mean: suggestion } : {}), supported_types: [...OPERATION_TYPES] });
+  }
   if (!isPlainObject(envelope.actor) || !["user", "agent", "stakeholder"].includes(envelope.actor.kind)) issues.push({ code: "invalid_actor", field: "actor", message: "actor.kind must be user, agent, or stakeholder" });
   if (typeof envelope.reason !== "string" || !envelope.reason.trim()) issues.push({ code: "missing_reason", field: "reason", message: "Operation reason is required" });
   if (!isStringArray(envelope.source_ids || [])) issues.push({ code: "invalid_source_ids", field: "source_ids", message: "source_ids must be a unique string array" });
@@ -384,6 +405,23 @@ export function validateOperationEnvelope(envelope) {
 export function canTransition(kind, from, to) {
   if (from === to) return true;
   return Boolean(TRANSITIONS[kind]?.[from]?.includes(to));
+}
+
+// 非法转换必须说明当前状态、目标状态和合法去向，否则调用方只能猜下一步。
+export function assertTransition(kind, from, to, id = null) {
+  if (canTransition(kind, from, to)) return;
+  const allowed = TRANSITIONS[kind]?.[from] || [];
+  throw new Error(JSON.stringify({
+    code: "invalid_transition",
+    kind,
+    ...(id ? { id } : {}),
+    from,
+    to,
+    allowed_targets: allowed,
+    fix: allowed.length
+      ? `From ${from} this ${kind} may only move to: ${allowed.join(", ")}`
+      : `${from} is a terminal state for ${kind}; create a successor record instead of reopening it`,
+  }));
 }
 
 export function nextId(records, kind) {

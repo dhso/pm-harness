@@ -4,8 +4,8 @@ import path from "node:path";
 import {
   SCHEMA_VERSION,
   baselineDigest,
+  assertTransition,
   baselineSnapshot,
-  canTransition,
   digestValue,
   makeOperationId,
   nextId,
@@ -26,6 +26,7 @@ import {
 } from "./helpers.mjs";
 import { validateOperationContract } from "./contracts.mjs";
 import {
+  COLLECTIONS,
   DECISION_CONTROLLED_FIELDS,
   REQUIREMENT_IMMUTABLE_FIELDS,
   REQUIREMENT_LINK_FIELDS,
@@ -38,6 +39,58 @@ import { generatedEntries } from "./views.mjs";
 import { commitTransaction, jsonEntry } from "./transaction.mjs";
 import { applyWorkflow } from "./workflow.mjs";
 import { applyContentOperation } from "./content-operations.mjs";
+
+// 逐条比较受影响集合，产出记录级 before/after，供对话中展示待确认变更。
+function diffRecords(before, after, store, collection) {
+  const changes = [];
+  const previous = new Map((Array.isArray(before) ? before : []).map((item) => [item.id, item]));
+  for (const item of Array.isArray(after) ? after : []) {
+    const old = previous.get(item.id);
+    if (!old) {
+      changes.push({ store, collection, id: item.id, change: "created", after: item });
+      continue;
+    }
+    previous.delete(item.id);
+    if (digestValue(old) === digestValue(item)) continue;
+    const fields = [...new Set([...Object.keys(old), ...Object.keys(item)])].filter((field) => digestValue(old[field]) !== digestValue(item[field]));
+    changes.push({
+      store,
+      collection,
+      id: item.id,
+      change: "updated",
+      fields,
+      before: Object.fromEntries(fields.map((field) => [field, old[field] ?? null])),
+      after: Object.fromEntries(fields.map((field) => [field, item[field] ?? null])),
+    });
+  }
+  for (const item of previous.values()) changes.push({ store, collection, id: item.id, change: "removed", before: item });
+  return changes;
+}
+
+function diffStores(before, after, changedStores) {
+  if (!before) return [];
+  const changes = [];
+  for (const [store, collection] of COLLECTIONS.map((item) => [item[0], item[1]])) {
+    if (!changedStores.has(store)) continue;
+    changes.push(...diffRecords(before[store]?.[collection], after[store]?.[collection], store, collection));
+  }
+  // 项目存储不是集合，单独比较标量字段。
+  if (changedStores.has("project")) {
+    const fields = [...new Set([...Object.keys(before.project || {}), ...Object.keys(after.project || {})])].filter((field) => digestValue(before.project?.[field]) !== digestValue(after.project?.[field]));
+    if (fields.length) {
+      changes.push({
+        store: "project",
+        collection: "project",
+        id: after.project?.id || "project",
+        change: "updated",
+        fields,
+        before: Object.fromEntries(fields.map((field) => [field, before.project?.[field] ?? null])),
+        after: Object.fromEntries(fields.map((field) => [field, after.project?.[field] ?? null])),
+      });
+    }
+  }
+  return changes;
+}
 
 export async function recordOperation(root, input, options = {}) {
   const envelope = clone(input);
@@ -57,6 +110,8 @@ export async function recordOperation(root, input, options = {}) {
   const extraEntries = [];
   const resultIds = [];
   let result = {};
+  // dry-run 需要与写入完全同源的前置快照：同一份数据、同一条校验路径，只是不提交。
+  const beforeState = options.dryRun ? clone(data) : null;
 
   if (envelope.type === "workflow.apply") {
     const workflow = await applyWorkflow(envelope, (child) => recordOperation(root, child, { ...options, data, deferCommit: true }));
@@ -98,7 +153,7 @@ export async function recordOperation(root, input, options = {}) {
       const actualChanges = [exactChange(data.project.id, before, { ...before, ...envelope.payload }, controlled)];
       for (const scope of scopes) verifyApproval(data, envelope.approval, scope, { requireChangeRequest: true, targetIds: [data.project.id], actualChanges });
     }
-    if (envelope.payload.status && !canTransition("project", data.project.status, envelope.payload.status)) throw new Error(`Invalid project transition: ${data.project.status} -> ${envelope.payload.status}`);
+    if (envelope.payload.status) assertTransition("project", data.project.status, envelope.payload.status, data.project.id);
     data.project = { ...data.project, ...envelope.payload, schema_version: SCHEMA_VERSION, updated_at: now };
     changedStores.add("project");
     resultIds.push(data.project.id);
@@ -192,7 +247,7 @@ export async function recordOperation(root, input, options = {}) {
     const record = defaultScheduleRecord({ ...existing, ...payload, source_ids: payload.source_ids ?? existing?.source_ids ?? envelope.source_ids }, kind, now);
     record.id ||= nextId(records, kind);
     delete record._kind;
-    if (existing && !canTransition("task", existing.status, record.status)) throw new Error(`Invalid schedule transition: ${existing.status} -> ${record.status}`);
+    if (existing) assertTransition(kind, existing.status, record.status, record.id);
     const baselineChanged = !sameBaseline(existing, record);
     const approvedBaseline = data.schedule.baseline?.status === "approved";
     const usesChangeRequest = Boolean(envelope.approval?.change_request_id);
@@ -233,7 +288,7 @@ export async function recordOperation(root, input, options = {}) {
     const existing = payload.id ? data.requirements.requirements.find((item) => item.id === payload.id) : null;
     const merged = { ...existing, ...payload };
     const record = { id: payload.id || nextId(data.requirements.requirements, "requirement"), title: merged.title, description: merged.description, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
-    if (existing && !canTransition("requirement", existing.status, record.status)) throw new Error(`Invalid requirement transition: ${existing.status} -> ${record.status}`);
+    if (existing) assertTransition("requirement", existing.status, record.status, record.id);
     const existingApproved = existing && ["approved", "implemented", "validated"].includes(existing.status);
     const approvedContentChanged = existingApproved && digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS) !== digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS);
     if (approvedContentChanged) throw new Error(JSON.stringify({ code: "approved_requirement_requires_new_version", id: record.id, fix: "Create a new REQ record and link the supersession through an approved change request" }));
@@ -250,7 +305,7 @@ export async function recordOperation(root, input, options = {}) {
       record.approved_by_id = approval.stakeholder.id;
       record.approved_at = approval.changeRequest?.effective_at || envelope.approval.approved_at;
       if (replacementApproval) {
-        if (!canTransition("requirement", predecessor.status, "superseded")) throw new Error(`Invalid predecessor transition: ${predecessor.status} -> superseded`);
+        assertTransition("requirement", predecessor.status, "superseded", predecessor.id);
         Object.assign(predecessor, { status: "superseded", superseded_by_id: record.id, updated_at: now });
         validateOrThrow("requirement", predecessor);
       }
@@ -269,7 +324,7 @@ export async function recordOperation(root, input, options = {}) {
     const payload = envelope.payload.record || Object.fromEntries(Object.entries(envelope.payload).filter(([key]) => key !== "collection"));
     const existing = payload.id ? data.registers[collection].find((item) => item.id === payload.id) : null;
     const record = { ...existing, ...payload, id: payload.id || nextId(data.registers[collection], kind), status: payload.status || existing?.status || (kind === "decision" ? "proposed" : "open"), source_ids: normalizeArray(payload.source_ids || envelope.source_ids), owner: kind === "decision" ? undefined : payload.owner ?? existing?.owner ?? null, updated_at: payload.updated_at || now };
-    if (kind === "decision" && existing && !canTransition("decision", existing.status, record.status)) throw new Error(`Invalid decision transition: ${existing.status} -> ${record.status}`);
+    if (kind === "decision" && existing) assertTransition("decision", existing.status, record.status, record.id);
     const approvedDecisionChanged = kind === "decision" && existing?.status === "approved" && digestFields(existing, DECISION_CONTROLLED_FIELDS) !== digestFields(record, DECISION_CONTROLLED_FIELDS);
     if (approvedDecisionChanged || kind === "decision" && existing?.status === "approved" && record.status === "superseded") {
       verifyApproval(data, envelope.approval, "decision", { requireChangeRequest: true, targetIds: [record.id], actualChanges: [exactChange(record.id, existing, record, DECISION_CONTROLLED_FIELDS)] });
@@ -305,7 +360,7 @@ export async function recordOperation(root, input, options = {}) {
   } else if (envelope.type === "change.approve") {
     const record = data.requirements.change_requests.find((item) => item.id === envelope.payload.id);
     if (!record) throw new Error(`Change request not found: ${envelope.payload.id}`);
-    if (!canTransition("change_request", record.status, "approved")) throw new Error(`Cannot approve change request from ${record.status}`);
+    assertTransition("change_request", record.status, "approved", record.id);
     if (!record.change_items?.length || record.target_ids.some((id) => !record.change_items.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_exact_change_required", id: record.id }));
     const approval = verifyApproval(data, envelope.approval, record.approval_scope);
     if (Date.parse(envelope.approval.approved_at) < Date.parse(record.created_at)) throw new Error(JSON.stringify({ code: "approval_predates_change_request", id: record.id }));
@@ -329,6 +384,23 @@ export async function recordOperation(root, input, options = {}) {
   const validation = await collectIssues(root, data, { checkFiles: false, checkGenerated: false, pendingPaths });
   const errors = validation.filter((item) => item.level === "error");
   if (errors.length) throw new Error(JSON.stringify({ code: "workspace_validation_failed", issues: errors }));
+  // dry-run：审批、校验、状态转换都已按真实路径跑完，只是不落盘。
+  // 用途是先向用户展示 before/after 再执行，不得据此跳过任何护栏。
+  if (options.dryRun) {
+    return {
+      ok: true,
+      dry_run: true,
+      committed: false,
+      operation_id: envelope.operation_id,
+      type: envelope.type,
+      target_ids: [...new Set(resultIds)],
+      changes: diffStores(beforeState, data, changedStores),
+      changed_stores: [...changedStores].sort(),
+      would_write: [...new Set([...[...changedStores].map((key) => STORE_FILES[key]), ...extraEntries.map((item) => item.path)])].sort(),
+      warnings: validation.filter((item) => item.level === "warning"),
+      ...result,
+    };
+  }
   const entries = [...changedStores].map((key) => jsonEntry(STORE_FILES[key], data[key]));
   entries.push(...extraEntries);
   entries.push(...await generatedEntries(root, data));

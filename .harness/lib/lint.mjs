@@ -125,6 +125,9 @@ function modelCollections(data, issues) {
 export async function collectIssues(root, data, options = {}) {
   const issues = [];
   const pendingPaths = new Set(options.pendingPaths || []);
+  // checkFiles 为旧调用方保留；新调用方应分别控制哈希与 Wiki 注册扫描。
+  const checkContentHashes = options.checkContentHashes ?? options.checkFiles ?? true;
+  const checkWikiRegistration = options.checkWikiRegistration ?? options.checkFiles ?? true;
   const exists = (relative) => pendingPaths.has(relative.split(path.sep).join("/")) || existsSync(path.join(root, relative));
   for (const [key, relative] of Object.entries(STORE_FILES)) {
     if (!isPlainObject(data[key])) addIssue(issues, "error", "invalid_store", relative, "Top-level store must be an object");
@@ -261,7 +264,7 @@ export async function collectIssues(root, data, options = {}) {
       const approvalChange = (byKind.change || []).findLast((change) => change.kind === "deliverable_approval" && change.target_ids.includes(item.id));
       if (!approvalChange || approvalChange.after_hash !== digestFields(item, DELIVERABLE_IMMUTABLE_FIELDS)) addIssue(issues, "error", "deliverable_approved_snapshot_mismatch", STORE_FILES.deliverables, `${item.id} no longer matches its approved metadata snapshot`);
       if (!item.content_sha256) addIssue(issues, "error", "deliverable_content_hash_missing", STORE_FILES.deliverables, `${item.id} has no approved file hash`);
-      else if (item.path && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path)) && options.checkFiles !== false && await sha256Path(path.join(root, item.path)) !== item.content_sha256) addIssue(issues, "error", "deliverable_content_hash_mismatch", STORE_FILES.deliverables, `${item.id} file content differs from the approved hash`);
+      else if (item.path && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path)) && checkContentHashes && await sha256Path(path.join(root, item.path)) !== item.content_sha256) addIssue(issues, "error", "deliverable_content_hash_mismatch", STORE_FILES.deliverables, `${item.id} file content differs from the approved hash`);
     }
     if (["delivered", "accepted"].includes(item.status) && !item.delivered_at) addIssue(issues, "error", "delivery_time_missing", STORE_FILES.deliverables, `${item.id} lacks delivered_at`);
     if (item.status === "accepted" && (!item.accepted_at || !canApprove(item.accepted_by_id, "acceptance") || !item.acceptance_evidence)) addIssue(issues, "error", "acceptance_missing", STORE_FILES.deliverables, `${item.id} lacks acceptance authority, time, or evidence`);
@@ -301,7 +304,7 @@ export async function collectIssues(root, data, options = {}) {
     if (item.status === "superseded" && !item.superseded_by_id) addIssue(issues, "error", "supersession_missing", STORE_FILES.catalog, `${item.id} is superseded without a replacement`);
     if (item.superseded_by_id && (byKind.wiki || []).find((candidate) => candidate.id === item.superseded_by_id)?.id && (byKind.wiki || []).find((candidate) => candidate.id === item.superseded_by_id)?.supersedes_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.catalog, `${item.id} replacement link is not reciprocal`);
   }
-  if (options.checkFiles !== false) {
+  if (checkWikiRegistration) {
     for (const file of await walkMarkdown(path.join(root, "knowledge/wiki"))) {
       if (file === ".gitkeep") continue;
       const normalized = `knowledge/wiki/${file}`;
@@ -353,7 +356,7 @@ export async function collectIssues(root, data, options = {}) {
     if (item.deliverable_id && !deliverableIds.has(item.deliverable_id)) addIssue(issues, "error", "archive_deliverable_missing", STORE_FILES.archive, `${item.id} references missing deliverable ${item.deliverable_id}`);
     if (!ARCHIVE_AVAILABILITY.includes(item.availability)) addIssue(issues, "error", "invalid_archive_availability", STORE_FILES.archive, `${item.id} has invalid availability`);
     if (item.availability === "local" && !exists(item.path)) addIssue(issues, "info", "archive_unavailable", STORE_FILES.archive, `${item.id} is not present on this machine`);
-    if (options.checkFiles !== false && data.config.verify_archive_hash_on_lint !== false && item.availability === "local" && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path))) {
+    if (checkContentHashes && data.config.verify_archive_hash_on_lint !== false && item.availability === "local" && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path))) {
       if (await sha256Path(path.join(root, item.path)) !== item.sha256) addIssue(issues, "error", "archive_content_hash_mismatch", STORE_FILES.archive, `${item.id} file content does not match its SHA-256`);
     }
   }
@@ -389,9 +392,10 @@ export async function collectIssues(root, data, options = {}) {
   return issues;
 }
 
-function summarizeIssues(issues) {
+function summarizeIssues(issues, fast = false) {
   return {
     ok: !issues.some((item) => item.level === "error"),
+    ...(fast ? { mode: "fast", skipped_checks: ["file_content_hash"] } : { mode: "full" }),
     counts: {
       error: issues.filter((item) => item.level === "error").length,
       warning: issues.filter((item) => item.level === "warning").length,
@@ -401,7 +405,9 @@ function summarizeIssues(issues) {
   };
 }
 
-export async function lintWorkspace(root) {
+// fast 模式跳过逐文件 SHA-256 校验（归档与交付物内容哈希），用于任务收尾；
+// maintain 与显式完整检查仍执行全量校验。
+export async function lintWorkspace(root, { fast = false } = {}) {
   const data = {};
   const issues = [];
   for (const [key, relative] of Object.entries(STORE_FILES)) {
@@ -411,8 +417,8 @@ export async function lintWorkspace(root) {
       addIssue(issues, "error", "invalid_json", relative, error.message);
     }
   }
-  if (issues.length) return summarizeIssues(issues);
-  issues.push(...await collectIssues(root, data));
+  if (issues.length) return summarizeIssues(issues, fast);
+  issues.push(...await collectIssues(root, data, fast ? { checkContentHashes: false, checkWikiRegistration: true } : {}));
   await addEnvironmentIssues(root, data, issues);
-  return summarizeIssues(issues);
+  return summarizeIssues(issues, fast);
 }

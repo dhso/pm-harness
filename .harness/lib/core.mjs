@@ -11,6 +11,8 @@ export {
 } from "./views.mjs";
 export { lintWorkspace } from "./lint.mjs";
 export { buildDailyBrief } from "./brief.mjs";
+export { describeOperationContract, OPERATION_CONTRACT_PATH, renderOperationContract } from "./contract-docs.mjs";
+export { queryWorkspace } from "./query.mjs";
 export {
   recordOperation,
 } from "./operations.mjs";

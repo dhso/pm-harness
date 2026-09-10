@@ -22,14 +22,9 @@ ID 一经分配不得复用；标题或路径变化不改变 ID。规则与其�
 
 ## 状态与转换
 
-- 项目：`uninitialized → active ↔ on_hold → completed | cancelled`
-- 任务：`not_started → in_progress | blocked → done`，活动项也可取消；完成/取消后不可重新打开。
-- 需求：`candidate → proposed → approved → implemented → validated`，或进入 `rejected | superseded`。
-- 变更请求：`proposed → impact_review → approved → implemented`，或 `rejected`。
-- 决定：`proposed → approved → superseded`，或 `rejected`。
-- 交付物：`requested → drafting → review → approved → delivered → accepted`，也可合法返回修改、取消或被替代。
-- 收件箱：`new → triaged | needs_confirmation → applied | archived | rejected`；终态不重开。
-- 规则提案：`proposed → approved → active → retired`，或 `rejected`；一次用户激活操作可连续完成批准和激活。
+每个对象的状态取值和允许转换由 `TRANSITIONS` 决定，已随字段表一并生成到 [operation-contract.md](operation-contract.md)，需要具体取值时查那里，不在本文件重复维护。
+
+要点：任务和收件箱的终态不可重开；需求和决定通过替代链演进，不原地改写；交付物可合法返回修改、取消或被替代；一次用户激活操作可让规则提案连续完成批准和激活。
 
 不要靠直接编辑绕过转换。受控状态还必须同时满足审批范围和时间顺序。
 
