@@ -243,6 +243,7 @@ payload 无字段（空对象）。
 | `id` | `string` |  |
 | `title` | `string` |  |
 | `description` | `string` |  |
+| `owner` | `nullableString` |  |
 | `status` | `string` |  |
 | `acceptance_criteria` | `stringArray` |  |
 | `source_ids` | `stringArray` |  |

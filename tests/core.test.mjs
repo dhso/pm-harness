@@ -266,6 +266,7 @@ test("approved requirement snapshot detects direct edits and requires a new vers
   requirements.requirements[0].description = "Export records";
   await writeJsonFixture(root, "project/requirements.json", requirements);
   await assert.rejects(recordOperation(root, operation("requirement.upsert", { id: approved.requirement.id, description: "Overwrite approved text" }, { approval: businessApproval(approver.id) })), /approved_requirement_requires_new_version/);
+  await assert.rejects(recordOperation(root, operation("requirement.upsert", { id: approved.requirement.id, owner: "Product" }, { approval: businessApproval(approver.id) })), /approved_requirement_requires_new_version/);
 });
 
 test("approved requirement replacement closes both sides of the supersession chain", async () => {
@@ -273,6 +274,7 @@ test("approved requirement replacement closes both sides of the supersession cha
   await initialize(root);
   const approver = (await stakeholder(root, ["requirement"])).stakeholder;
   const old = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV", status: "approved", acceptance_criteria: ["CSV downloads"], source_ids: [] }, { approval: businessApproval(approver.id) }));
+  const linkedTask = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Implement export", owner: "Engineer", requirement_ids: [old.requirement.id] }));
   const replacement = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id }));
   await recordOperation(root, operation("requirement.upsert", { id: replacement.requirement.id, status: "proposed" }));
   const exact = {
@@ -286,7 +288,44 @@ test("approved requirement replacement closes both sides of the supersession cha
   const records = (await readJson(root, "project/requirements.json")).requirements;
   assert.equal(records.find((item) => item.id === old.requirement.id).superseded_by_id, replacement.requirement.id);
   assert.equal(records.find((item) => item.id === replacement.requirement.id).supersedes_id, old.requirement.id);
+  const linked = (await readJson(root, "project/schedule.json")).tasks.find((item) => item.id === linkedTask.schedule_item.id);
+  assert.deepEqual(linked.requirement_ids, [replacement.requirement.id]);
+  assert.equal(linked.owner, "Engineer", "missing replacement owner must not erase an existing task owner");
+  assert.match(await readFile(path.join(root, "project/status.md"), "utf8"), /Export.*已由.*替代/);
+  assert.match(await readFile(path.join(root, "memory/current.md"), "utf8"), /已生效变更：Export/);
   assert.equal((await lintWorkspace(root)).ok, true);
+});
+
+test("replacement requirement owner propagates to linked tasks while missing owners remain compatible", async () => {
+  const root = await workspace();
+  await initialize(root);
+  const approver = (await stakeholder(root, ["requirement"])).stakeholder;
+  const old = await recordOperation(root, operation("requirement.upsert", { title: "Checkout", description: "Complete checkout", status: "approved", acceptance_criteria: ["Order submits"], source_ids: [] }, { approval: businessApproval(approver.id) }));
+  const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Build checkout", owner: "Engineer", requirement_ids: [old.requirement.id] }));
+  const replacement = await recordOperation(root, operation("requirement.upsert", { title: "Checkout", description: "Complete checkout", owner: "Product", status: "candidate", acceptance_criteria: ["Order submits"], source_ids: [], supersedes_id: old.requirement.id }));
+  await recordOperation(root, operation("requirement.upsert", { id: replacement.requirement.id, status: "proposed" }));
+  const change = await recordOperation(root, operation("change.propose", { title: "Assign checkout owner", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [{ target_id: old.requirement.id, before: { status: "approved", superseded_by_id: null }, after: { status: "superseded", superseded_by_id: replacement.requirement.id, replacement: { title: "Checkout", description: "Complete checkout", owner: "Product", acceptance_criteria: ["Order submits"] } } }], before: "Engineer-owned checkout", after: "Product-owned checkout", reason: "Ownership clarified", impact: "Linked implementation task changes owner", created_at: minutesAgo(5) }));
+  await recordOperation(root, operation("change.approve", { id: change.change_request.id }, { approval: businessApproval(approver.id) }));
+  await recordOperation(root, operation("requirement.upsert", { id: replacement.requirement.id, status: "approved" }, { approval: businessApproval(approver.id, { change_request_id: change.change_request.id }) }));
+  const linked = (await readJson(root, "project/schedule.json")).tasks.find((item) => item.id === task.schedule_item.id);
+  assert.equal(linked.owner, "Product");
+  assert.equal((await readJson(root, "project/requirements.json")).requirements.find((item) => item.id === replacement.requirement.id).owner, "Product");
+  assert.equal((await lintWorkspace(root)).ok, true);
+});
+
+test("requirement change proposals require a matching candidate and deduplicate unfinished drafts", async () => {
+  const root = await workspace();
+  await initialize(root);
+  const approver = (await stakeholder(root, ["requirement"])).stakeholder;
+  const old = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV", status: "approved", acceptance_criteria: ["CSV downloads"], source_ids: [] }, { approval: businessApproval(approver.id) }));
+  const item = { target_id: old.requirement.id, before: { status: "approved", superseded_by_id: null }, after: { status: "superseded", superseded_by_id: "REQ-002", replacement: { title: "Export", description: "Export CSV and XLSX", acceptance_criteria: ["CSV and XLSX download"] } } };
+  await assert.rejects(recordOperation(root, operation("change.propose", { title: "Replace export", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Need XLSX", impact: "Broader export" })), /replacement_candidate_required|replacement_candidate_snapshot_mismatch/);
+  await assert.rejects(recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "proposed", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id })), /replacement_candidate_required/);
+  await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id }));
+  const first = await recordOperation(root, operation("change.propose", { title: "Replace export", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Need XLSX", impact: "Broader export" }));
+  await assert.rejects(recordOperation(root, operation("change.propose", { title: "Same export replacement", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Different wording", impact: "Same change" })), /duplicate_change_request/);
+  assert.equal((await readJson(root, "project/requirements.json")).change_requests.filter((item) => item.status === "proposed").length, 1);
+  assert.ok(first.change_request.id);
 });
 
 test("source registration archives atomically, hashes content, deduplicates, and controls inbox disposition", async () => {

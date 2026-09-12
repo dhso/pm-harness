@@ -216,7 +216,7 @@ export const RECORD_MODELS = Object.freeze({
     id: "requirement",
     required: ["id", "title", "description", "status", "acceptance_criteria", "source_ids", "updated_at"],
     status: "requirement",
-    fields: { title: "string", description: "string", status: "string", acceptance_criteria: "stringArray", source_ids: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString", approved_by_id: "nullableString", approved_at: "nullableTimestamp", updated_at: "timestamp" },
+    fields: { title: "string", description: "string", owner: "nullableString", status: "string", acceptance_criteria: "stringArray", source_ids: "stringArray", supersedes_id: "nullableString", superseded_by_id: "nullableString", approved_by_id: "nullableString", approved_at: "nullableTimestamp", updated_at: "timestamp" },
   },
   change_request: {
     id: "change_request",

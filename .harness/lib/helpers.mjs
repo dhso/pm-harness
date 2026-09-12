@@ -104,13 +104,14 @@ export function exactChange(targetId, before, after, fields) {
 }
 
 export function replacementChange(targetId, predecessor, replacement, fields) {
+  const replacementFields = fields.filter((field) => field !== "owner" || predecessor?.owner != null || replacement?.owner != null);
   return {
     target_id: targetId,
     before: { status: predecessor?.status ?? null, superseded_by_id: predecessor?.superseded_by_id ?? null },
     after: {
       status: "superseded",
       superseded_by_id: replacement.id,
-      replacement: Object.fromEntries(fields.map((field) => [field, replacement?.[field] ?? null])),
+      replacement: Object.fromEntries(replacementFields.map((field) => [field, replacement?.[field] ?? null])),
     },
   };
 }

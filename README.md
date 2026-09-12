@@ -123,7 +123,7 @@ pm-harness/
 | `project/status.md` | 给人阅读的当前状态摘要，包括重点、阻塞和下一步 | 通过 `status.update` 与相关事实事务同步 |
 | `project/schedule.json` | 任务、里程碑、负责人、依赖、进度以及基线/预测/实际时间的唯一结构化事实源 | AI Agent 根据计划和进展维护 |
 | `project/gantt.md` | 从时间计划自动生成的 Mermaid 甘特图和时间偏差表 | 自动生成，不应手工编辑 |
-| `project/requirements.json` | 需求和变更请求，包括状态、验收标准、来源和影响 | 需求工作或变更控制时维护 |
+| `project/requirements.json` | 需求和变更请求，包括状态、可选负责人、验收标准、来源和影响 | 需求工作或变更控制时维护 |
 | `project/registers.json` | 风险、问题和决策登记册 | 状态汇报、会议或来源摄取后维护 |
 
 计划时间分为三类：

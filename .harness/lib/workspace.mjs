@@ -41,7 +41,8 @@ export const COLLECTIONS = Object.freeze([
   ["archive", "files", "archive"],
 ]);
 
-export const REQUIREMENT_IMMUTABLE_FIELDS = Object.freeze(["title", "description", "acceptance_criteria"]);
+export const REQUIREMENT_IMMUTABLE_FIELDS = Object.freeze(["title", "description", "acceptance_criteria", "owner"]);
+export const REQUIREMENT_LEGACY_IMMUTABLE_FIELDS = Object.freeze(["title", "description", "acceptance_criteria"]);
 export const REQUIREMENT_LINK_FIELDS = Object.freeze(["source_ids", "supersedes_id", "superseded_by_id"]);
 export const DELIVERABLE_IMMUTABLE_FIELDS = Object.freeze(["title", "type", "format", "version", "path", "content_sha256", "audience", "purpose", "requirement_ids", "source_ids", "due_at", "acceptance_criteria", "reviewers"]);
 export const DELIVERABLE_CONTROLLED_FIELDS = Object.freeze([...DELIVERABLE_IMMUTABLE_FIELDS, "supersedes_id", "superseded_by_id"]);

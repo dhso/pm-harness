@@ -40,6 +40,7 @@ import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.m
 import { applyWorkflow } from "./workflow.mjs";
 import { applyContentOperation } from "./content-operations.mjs";
 import { applyCompensation, captureCompensation } from "./compensation.mjs";
+import { findDuplicateDraft, syncRequirementReplacement, validateChangeProposal } from "./change-validation.mjs";
 
 // 逐条比较受影响集合，产出记录级 before/after，供对话中展示待确认变更。
 function diffRecords(before, after, store, collection) {
@@ -314,7 +315,17 @@ export async function recordOperation(root, input, options = {}) {
     const payload = envelope.payload;
     const existing = payload.id ? data.requirements.requirements.find((item) => item.id === payload.id) : null;
     const merged = { ...existing, ...payload };
-    const record = { id: nextWorkspaceId(data, data.requirements.requirements, "requirement", payload.id), title: merged.title, description: merged.description, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
+    if (!existing && merged.supersedes_id && !data.requirements.requirements.some((item) => item.id === merged.supersedes_id)) {
+      throw new Error(JSON.stringify({ code: "invalid_supersession", predecessor_id: merged.supersedes_id, fix: "先登记存在的旧需求，再创建带 supersedes_id 的替代候选" }));
+    }
+    if (!existing && merged.supersedes_id && merged.status === "proposed") {
+      throw new Error(JSON.stringify({ code: "replacement_candidate_required", predecessor_id: merged.supersedes_id, fix: "替代需求必须先以 candidate 创建，再单独转换为 proposed" }));
+    }
+    if (!existing && merged.supersedes_id && ["candidate", "proposed"].includes(merged.status || "candidate")) {
+      const duplicateCandidate = data.requirements.requirements.find((item) => item.supersedes_id === merged.supersedes_id && ["candidate", "proposed"].includes(item.status));
+      if (duplicateCandidate) throw new Error(JSON.stringify({ code: "duplicate_replacement_candidate", predecessor_id: merged.supersedes_id, candidate_id: duplicateCandidate.id, fix: `继续现有候选 ${duplicateCandidate.id}，或先将其驳回后再创建新的替代候选` }));
+    }
+    const record = { id: nextWorkspaceId(data, data.requirements.requirements, "requirement", payload.id), title: merged.title, description: merged.description, owner: merged.owner ?? null, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
     if (existing) assertTransition("requirement", existing.status, record.status, record.id);
     const existingApproved = existing && ["approved", "implemented", "validated"].includes(existing.status);
     const approvedContentChanged = existingApproved && digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS) !== digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS);
@@ -335,6 +346,9 @@ export async function recordOperation(root, input, options = {}) {
         assertTransition("requirement", predecessor.status, "superseded", predecessor.id);
         Object.assign(predecessor, { status: "superseded", superseded_by_id: record.id, updated_at: now });
         validateOrThrow("requirement", predecessor);
+        const synced = await syncRequirementReplacement(root, data, predecessor, record, now);
+        if (synced.changedTasks.length) changedStores.add("schedule");
+        extraEntries.push(...synced.entries);
       }
       addControlledChange(data, envelope, { kind: "requirement", target_ids: replacementApproval ? [record.id, predecessor.id] : [record.id], change_request_target_ids: replacementApproval ? [predecessor.id] : undefined, before: existing || {}, after: record, before_hash: digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS), after_hash: digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS), before_summary: existing?.description || null, after_summary: record.description });
       changedStores.add("changes");
@@ -378,7 +392,12 @@ export async function recordOperation(root, input, options = {}) {
     const changeItems = Array.isArray(payload.change_items) ? payload.change_items : [];
     if (!targetIds.length || targetIds.length !== changeItems.length || targetIds.some((id) => !changeItems.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_items_mismatch", fix: "Provide one exact before/after change_item for every target_id" }));
     if (changeItems.some((item) => digestValue(item.before) === digestValue(item.after))) throw new Error(JSON.stringify({ code: "change_request_no_effect", fix: "change_items 的 before 与 after 完全相同；变更请求必须描述真实改动" }));
-    const record = { id: nextWorkspaceId(data, data.requirements.change_requests, "change_request", payload.id), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: normalizeArray(payload.source_ids || envelope.source_ids), created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
+    const sourceIds = normalizeArray(payload.source_ids || envelope.source_ids);
+    validateChangeProposal(data, { approvalScope: payload.approval_scope, targetIds, changeItems });
+    const draft = { approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, source_ids: sourceIds };
+    const duplicate = findDuplicateDraft(data, draft);
+    if (duplicate) throw new Error(JSON.stringify({ code: "duplicate_change_request", duplicate_id: duplicate.id, fix: `已有相同目标、来源和摘要的草稿 ${duplicate.id}；请继续该草稿或先驳回后再提交新的变更请求` }));
+    const record = { id: nextWorkspaceId(data, data.requirements.change_requests, "change_request", payload.id), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: sourceIds, created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
     validateOrThrow("change_request", record);
     data.requirements.change_requests.push(record);
     changedStores.add("requirements");
@@ -412,9 +431,10 @@ export async function recordOperation(root, input, options = {}) {
 
   const response = { ok: true, idempotent: false, operation_id: envelope.operation_id, target_ids: [...new Set(resultIds)], ...result };
   if (options.deferCommit) return { ...response, transaction: { changed_stores: [...changedStores], entries: extraEntries } };
+  const uniqueExtraEntries = [...new Map(extraEntries.map((entry) => [entry.path, entry])).values()];
   const compensation = envelope.type === "operation.compensate"
     ? { version: 2, reversible: false, records: [], metadata: [], documents: [], retained_paths: [], blocked_paths: [] }
-    : await captureCompensation(root, beforeState, data, changedStores, extraEntries, result);
+    : await captureCompensation(root, beforeState, data, changedStores, uniqueExtraEntries, result);
   data.changes.operations ||= [];
   data.changes.operations.push({ operation_id: envelope.operation_id, request_hash: requestHash, type: envelope.type, target_ids: [...new Set(resultIds)], recorded_at: now, result: clone(result), compensation });
   changedStores.add("changes");
@@ -440,9 +460,11 @@ export async function recordOperation(root, input, options = {}) {
     };
   }
   const entries = [...changedStores].map((key) => jsonEntry(STORE_FILES[key], data[key]));
-  entries.push(...extraEntries);
+  entries.push(...uniqueExtraEntries);
   entries.push(...await generatedEntries(root, data));
-  await commitTransaction(root, envelope.operation_id, entries, {
+  // 一个 workflow 可能同时自动同步摘要、又显式提交 status/memory 更新；同一事务只保留最后一次内容。
+  const uniqueEntries = [...new Map(entries.map((entry) => [entry.path, entry])).values()];
+  await commitTransaction(root, envelope.operation_id, uniqueEntries, {
     failAfter: options.failAfter,
     lockHeld: true,
   });

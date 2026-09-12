@@ -33,6 +33,7 @@ ID 一经分配不得复用；标题或路径变化不改变 ID。规则与其�
 - 纯日期使用真实的 `YYYY-MM-DD`；事件使用可解析的 ISO 8601 时间戳。
 - `source_time`、`captured_at`、`approved_at`、`confirmed_by_user_at`、`effective_at` 分别记录，不互相替代。
 - 计划对象同时保留 `baseline_*`、`forecast_*`、`actual_*`。
+- 需求 `owner` 是可选负责人字段；历史记录缺失时按 `null` 兼容。替代需求明确负责人后，成功应用替代链才将负责人传播到关联任务。
 - 跨文件关系只使用稳定 ID；失效来源、依赖、交付、Wiki、提案和替代引用会报错。
 - `schedule.baseline.digest` 是所有基线日期字段的规范化 SHA-256；批准记录的 after hash 必须一致。
 - 交付物的完成、批准、交付和验收时间必须依次发生；替代链不得自指或成环。

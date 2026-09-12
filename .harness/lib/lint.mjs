@@ -28,11 +28,13 @@ import {
   DECISION_CONTROLLED_FIELDS,
   DELIVERABLE_IMMUTABLE_FIELDS,
   REQUIREMENT_IMMUTABLE_FIELDS,
+  REQUIREMENT_LEGACY_IMMUTABLE_FIELDS,
   STORE_FILES,
   readJson,
 } from "./workspace.mjs";
 import { generatedEntries } from "./views.mjs";
 import { addEnvironmentIssues } from "./environment.mjs";
+import { findDuplicateDraft, validateChangeProposal } from "./change-validation.mjs";
 import { validateWorkspaceContract } from "./contracts.mjs";
 
 function addIssue(issues, level, code, relativePath, message, fix = null) {
@@ -228,18 +230,36 @@ export async function collectIssues(root, data, options = {}) {
     if (["approved", "implemented", "validated"].includes(item.status) && (!canApprove(item.approved_by_id, "requirement") || !item.approved_at)) addIssue(issues, "error", "requirement_approval_missing", STORE_FILES.requirements, `${item.id} is ${item.status} without an active approver in requirement scope and approval time`);
     if (["approved", "implemented", "validated"].includes(item.status)) {
       const approvalChange = (byKind.change || []).findLast((change) => change.kind === "requirement" && change.target_ids.includes(item.id));
-      if (!approvalChange || approvalChange.after_hash !== digestFields(item, REQUIREMENT_IMMUTABLE_FIELDS)) addIssue(issues, "error", "requirement_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches its last approved content snapshot`);
+      const snapshotMatches = approvalChange && (approvalChange.after_hash === digestFields(item, REQUIREMENT_IMMUTABLE_FIELDS) || (item.owner == null && approvalChange.after_hash === digestFields(item, REQUIREMENT_LEGACY_IMMUTABLE_FIELDS)));
+      if (!snapshotMatches) addIssue(issues, "error", "requirement_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches its last approved content snapshot`);
     }
     if (item.superseded_by_id && !requirementIds.has(item.superseded_by_id)) addIssue(issues, "error", "invalid_supersession", STORE_FILES.requirements, `${item.id} references missing replacement ${item.superseded_by_id}`);
     if (item.status === "superseded" && !item.superseded_by_id) addIssue(issues, "error", "supersession_missing", STORE_FILES.requirements, `${item.id} is superseded without a replacement`);
     if (item.supersedes_id && !requirementIds.has(item.supersedes_id)) addIssue(issues, "error", "invalid_supersession", STORE_FILES.requirements, `${item.id} references missing predecessor ${item.supersedes_id}`);
     if (item.superseded_by_id && (byKind.requirement || []).find((candidate) => candidate.id === item.superseded_by_id)?.supersedes_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.requirements, `${item.id} replacement link is not reciprocal`);
+    if (item.status === "superseded") {
+      const linked = [...(data.schedule.tasks || []), ...(data.schedule.milestones || [])].filter((task) => Array.isArray(task.requirement_ids) && task.requirement_ids.includes(item.id));
+      if (linked.length) addIssue(issues, "error", "superseded_requirement_task_link", STORE_FILES.schedule, `${item.id} is superseded but remains linked from ${linked.map((task) => task.id).join(", ")}; apply the replacement before updating the requirement status`);
+    }
   }
   for (const item of byKind.change_request || []) {
     validateRefs(issues, item, "target_ids", allIds, STORE_FILES.requirements);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.requirements);
     const changeItemIds = new Set((item.change_items || []).map((change) => change.target_id));
     if (changeItemIds.size !== item.target_ids.length || item.target_ids.some((id) => !changeItemIds.has(id))) addIssue(issues, ["approved", "implemented"].includes(item.status) ? "error" : "warning", "change_request_items_mismatch", STORE_FILES.requirements, `${item.id} must contain one exact change_item per target before approval`);
+    if (["proposed", "impact_review", "approved"].includes(item.status) && item.change_items?.length) {
+      const duplicate = findDuplicateDraft(data, item, { excludeId: item.id });
+      if (duplicate) addIssue(issues, "warning", "duplicate_change_request", STORE_FILES.requirements, `${item.id} duplicates unfinished change request ${duplicate.id}; continue one draft and reject the other`);
+    }
+    if (["proposed", "impact_review"].includes(item.status) && item.change_items?.length) {
+      try {
+        validateChangeProposal(data, { approvalScope: item.approval_scope, targetIds: item.target_ids, changeItems: item.change_items });
+      } catch (error) {
+        let details;
+        try { details = JSON.parse(error.message); } catch { details = {}; }
+        addIssue(issues, "error", details.code || "change_request_snapshot_invalid", STORE_FILES.requirements, `${item.id} cannot be applied safely: ${details.fix || error.message}`);
+      }
+    }
     if (["approved", "implemented"].includes(item.status) && item.approved_change_digest !== digestValue(item.change_items)) addIssue(issues, "error", "change_request_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches the approved exact change`);
     if ((item.applied_target_ids || []).some((id) => !item.target_ids.includes(id))) addIssue(issues, "error", "change_request_application_mismatch", STORE_FILES.requirements, `${item.id} records an applied target outside its approved target set`);
     if (item.status === "implemented" && (!item.applied_at || item.target_ids.some((id) => !item.applied_target_ids.includes(id)))) addIssue(issues, "error", "change_request_application_incomplete", STORE_FILES.requirements, `${item.id} is implemented without all targets and applied_at`);
