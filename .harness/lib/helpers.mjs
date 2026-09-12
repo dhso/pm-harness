@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { digestValue, isDate, nextId, validateRecord } from "./model.mjs";
+import { digestValue, isDate, isPlainObject, nextId, validateRecord } from "./model.mjs";
 
 export function text(value) {
   return value === null || value === undefined || value === "" ? "—" : String(value);
@@ -73,6 +73,18 @@ export function upsert(records, record) {
 
 export function normalizeArray(value) {
   return Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === "string" && item))] : [];
+}
+
+function normalizeAcceptanceCriteria(value, field = null) {
+  if (field === "acceptance_criteria" && Array.isArray(value)) return [...new Set(value)].sort();
+  if (Array.isArray(value)) return value.map((item) => normalizeAcceptanceCriteria(item));
+  if (!isPlainObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeAcceptanceCriteria(item, key)]));
+}
+
+// 验收标准是集合而不是优先级列表；仅在比较时规范化，事实记录仍保留原始展示顺序。
+export function digestChangeIntent(value) {
+  return digestValue(normalizeAcceptanceCriteria(value));
 }
 
 // 已被补偿移除的记录仍保留在操作历史中，自动与显式 ID 都不得重新分配。

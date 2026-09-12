@@ -16,9 +16,9 @@
 
 - 初始 baseline 可先作为草稿整体准备，再一次批准。baseline 批准后，新增、修改或删除任何基线事项都必须关联具有相同目标、审批范围和精确 before/after 的已批准变更请求。
 - 同一批准或同一逻辑变更涉及多个计划条目时，使用 `schedule.batch-upsert` 一次预演、一次提交；不要循环调用 `schedule.upsert`。批量操作全部校验成功才写入，并只产生一个 baseline revision 和一条受控变更记录。
-- 日常进展只更新 forecast、actual、progress、status 和 next action。
+- 日常字段变化可更新 forecast、actual、progress 和 next action；状态变化使用 `schedule.transition` 并提供真实 `occurred_at`，不得用录入时间静默猜测实际发生时间。
 - `forecast_end` 晚于 `baseline_end` 时保留偏差，不移动 baseline 掩盖延期。
-- 完成事项写 actual end，并链接交付物、决定或其他结果证据。
+- 进入进行中时记录 actual start；完成事项必须已有 actual start，由转换事件记录 actual end，并链接交付物、决定或其他结果证据。
 
 ## 活动记录
 

@@ -224,6 +224,25 @@ collection 为 tasks 或 milestones；新建 record 需要 title，更新 record
 
 允许转换：`not_started` → `in_progress` | `blocked` | `cancelled`；`in_progress` → `blocked` | `done` | `cancelled`；`blocked` → `in_progress` | `done` | `cancelled`
 
+### `schedule.transition`
+
+按项目时区从 occurred_at 记录实际日期；进入进行中或完成状态时不可缺失实际开始时间。
+
+必填：`id`、`status`、`occurred_at`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `id` | `string` | 是 |
+| `status` | `string` | 是 |
+| `occurred_at` | `timestamp` | 是 |
+| `progress` | `progress` |  |
+| `evidence` | `nullableString` |  |
+| `next_action` | `nullableString` |  |
+
+`task` 状态取值：`not_started`、`in_progress`、`blocked`、`done`、`cancelled`
+
+允许转换：`not_started` → `in_progress` | `blocked` | `cancelled`；`in_progress` → `blocked` | `done` | `cancelled`；`blocked` → `in_progress` | `done` | `cancelled`
+
 ### `schedule.baseline.approve`
 
 payload 为空对象；只确认已填写的草拟基线，不接受 change_request_id。重复批准相同快照会安全返回 already_approved，不新增修订；需要按变更请求修改日期时使用 schedule.batch-upsert。
@@ -256,6 +275,40 @@ payload 无字段（空对象）。
 `requirement` 状态取值：`candidate`、`proposed`、`approved`、`implemented`、`validated`、`superseded`、`rejected`
 
 允许转换：`candidate` → `proposed` | `rejected`；`proposed` → `approved` | `rejected`；`approved` → `implemented` | `superseded`；`implemented` → `validated` | `superseded`；`validated` → `superseded`
+
+### `requirement.replacement.propose`
+
+原子创建或复用替代需求及唯一变更请求；精确 before/after 由 Harness 根据事实生成，验收标准按无序集合比较。
+
+必填：`predecessor_id`、`replacement`、`reason`、`impact`
+
+可省略并由 Harness 补全：`title`、`source_ids`、`created_at`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `predecessor_id` | `string` | 是 |
+| `replacement` | `replacementRequirement` | 是 |
+| `title` | `string` |  |
+| `reason` | `string` | 是 |
+| `impact` | `string` | 是 |
+| `source_ids` | `stringArray` |  |
+| `created_at` | `timestamp` |  |
+
+`replacementRequirement` 的元素是替代需求对象：
+
+可用字段：`title`、`description`、`acceptance_criteria`、`owner`
+
+必填：`title`、`description`、`acceptance_criteria`
+
+不接受 id、状态或替代链接；这些字段由 Harness 原子生成。
+
+`requirement` 状态取值：`candidate`、`proposed`、`approved`、`implemented`、`validated`、`superseded`、`rejected`
+
+允许转换：`candidate` → `proposed` | `rejected`；`proposed` → `approved` | `rejected`；`approved` → `implemented` | `superseded`；`implemented` → `validated` | `superseded`；`validated` → `superseded`
+
+`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`voided`、`implemented`
+
+允许转换：`proposed` → `impact_review` | `approved` | `rejected` | `voided`；`impact_review` → `approved` | `rejected` | `voided`；`approved` → `implemented`
 
 ### `register.upsert`
 
@@ -300,7 +353,7 @@ payload 无字段（空对象）。
 
 ### `change.propose`
 
-每个 target_id 必须有一条 change_items: [{ target_id, before, after }]。
+低层入口；每个 target_id 必须有一条 change_items。相同结构化变更会返回现有草案，不按文字摘要重复创建；验收标准按无序集合比较。
 
 必填：`title`、`approval_scope`、`target_ids`、`change_items`、`before`、`after`、`reason`、`impact`
 
@@ -328,9 +381,9 @@ payload 无字段（空对象）。
 
 target_id 为非空字符串且不得重复；before 与 after 必须是对象。每个 target_id 一条。
 
-`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`implemented`
+`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`voided`、`implemented`
 
-允许转换：`proposed` → `impact_review` | `approved` | `rejected`；`impact_review` → `approved` | `rejected`；`approved` → `implemented`
+允许转换：`proposed` → `impact_review` | `approved` | `rejected` | `voided`；`impact_review` → `approved` | `rejected` | `voided`；`approved` → `implemented`
 
 ### `change.approve`
 
@@ -342,9 +395,27 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 |---|---|---|
 | `id` | `string` | 是 |
 
-`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`implemented`
+`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`voided`、`implemented`
 
-允许转换：`proposed` → `impact_review` | `approved` | `rejected`；`impact_review` → `approved` | `rejected`；`approved` → `implemented`
+允许转换：`proposed` → `impact_review` | `approved` | `rejected` | `voided`；`impact_review` → `approved` | `rejected` | `voided`；`approved` → `implemented`
+
+### `change.void`
+
+技术作废一条或多条尚未批准的无效/重复草案；保留原记录和操作审计，不表示业务驳回。
+
+必填：`ids`、`reason`
+
+可省略并由 Harness 补全：`voided_at`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `ids` | `stringArray` | 是 |
+| `reason` | `string` | 是 |
+| `voided_at` | `timestamp` |  |
+
+`change_request` 状态取值：`proposed`、`impact_review`、`approved`、`rejected`、`voided`、`implemented`
+
+允许转换：`proposed` → `impact_review` | `approved` | `rejected` | `voided`；`impact_review` → `approved` | `rejected` | `voided`；`approved` → `implemented`
 
 ### `inbox.transition`
 

@@ -81,6 +81,12 @@ export const OPERATION_SPECS = Object.freeze({
     status_kinds: ["task"],
     note: "原子写入多个任务或里程碑；全部校验通过后统一提交。基线字段只产生一次修订和一条变更记录。",
   },
+  "schedule.transition": {
+    fields: { id: "string", status: "string", occurred_at: "timestamp", progress: "progress", evidence: "nullableString", next_action: "nullableString" },
+    required: ["id", "status", "occurred_at"],
+    status_kinds: ["task"],
+    note: "按项目时区从 occurred_at 记录实际日期；进入进行中或完成状态时不可缺失实际开始时间。",
+  },
   "schedule.baseline.approve": { fields: {}, note: "payload 为空对象；只确认已填写的草拟基线，不接受 change_request_id。重复批准相同快照会安全返回 already_approved，不新增修订；需要按变更请求修改日期时使用 schedule.batch-upsert。" },
   "requirement.upsert": {
     fields: fieldTypes("requirement"),
@@ -88,6 +94,13 @@ export const OPERATION_SPECS = Object.freeze({
     update_required: ["id"],
     defaults: ["id", "status", "acceptance_criteria", "source_ids", "updated_at"],
     status_kinds: ["requirement"],
+  },
+  "requirement.replacement.propose": {
+    fields: { predecessor_id: "string", replacement: "replacementRequirement", title: "string", reason: "string", impact: "string", source_ids: "stringArray", created_at: "timestamp" },
+    required: ["predecessor_id", "replacement", "reason", "impact"],
+    defaults: ["title", "source_ids", "created_at"],
+    status_kinds: ["requirement", "change_request"],
+    note: "原子创建或复用替代需求及唯一变更请求；精确 before/after 由 Harness 根据事实生成，验收标准按无序集合比较。",
   },
   "register.upsert": {
     fields: { collection: "risks | issues | decisions", record: "object", ...mergedFieldTypes("risk", "issue", "decision") },
@@ -103,9 +116,10 @@ export const OPERATION_SPECS = Object.freeze({
     required: ["title", "approval_scope", "target_ids", "change_items", "before", "after", "reason", "impact"],
     defaults: ["id", "source_ids", "created_at"],
     status_kinds: ["change_request"],
-    note: "每个 target_id 必须有一条 change_items: [{ target_id, before, after }]。",
+    note: "低层入口；每个 target_id 必须有一条 change_items。相同结构化变更会返回现有草案，不按文字摘要重复创建；验收标准按无序集合比较。",
   },
   "change.approve": { fields: { id: "string" }, required: ["id"], status_kinds: ["change_request"], note: "批准后摘要锁定，实际写入必须逐项一致；approved_at 不得早于变更请求 created_at，同一 workflow 中建议显式使用递增时间戳。" },
+  "change.void": { fields: { ids: "stringArray", reason: "string", voided_at: "timestamp" }, required: ["ids", "reason"], defaults: ["voided_at"], status_kinds: ["change_request"], note: "技术作废一条或多条尚未批准的无效/重复草案；保留原记录和操作审计，不表示业务驳回。" },
   "inbox.transition": {
     fields: Object.fromEntries(Object.entries(fieldTypes("inbox")).filter(([field]) => ["id", "status", "applied_to_ids", "applied_at", "disposition_reason"].includes(field))),
     required: ["id", "status"],
@@ -166,6 +180,12 @@ export const COMPOSITE_TYPES = Object.freeze({
     fields: () => ["target_id", "before", "after"],
     required: ["target_id", "before", "after"],
     note: "target_id 为非空字符串且不得重复；before 与 after 必须是对象。每个 target_id 一条。",
+  },
+  replacementRequirement: {
+    element: "替代需求对象",
+    fields: () => ["title", "description", "acceptance_criteria", "owner"],
+    required: ["title", "description", "acceptance_criteria"],
+    note: "不接受 id、状态或替代链接；这些字段由 Harness 原子生成。",
   },
   operationArray: {
     element: "工作流步骤对象",
@@ -290,6 +310,15 @@ export function validateOperationContract(envelope) {
         else if (isPlainObject(item.record)) unknownFields(item.record, new Set(scheduleFields), `${prefix}record.`, issues);
       }
     });
+  }
+  if (envelope.type === "requirement.replacement.propose") {
+    const composite = COMPOSITE_TYPES.replacementRequirement;
+    const replacement = envelope.payload?.replacement;
+    if (!isPlainObject(replacement)) issues.push({ code: "invalid_replacement", field: "payload.replacement", message: "payload.replacement must be an object" });
+    else {
+      unknownFields(replacement, new Set(composite.fields()), "payload.replacement.", issues);
+      requiredFields(replacement, { fields: Object.fromEntries(composite.fields().map((field) => [field, RECORD_MODELS.requirement.fields[field]])), required: composite.required }, "payload.replacement.", issues);
+    }
   }
   for (const type of ["schedule.upsert", "register.upsert"]) {
     if (envelope.type === type && envelope.payload?.record !== undefined && !isPlainObject(envelope.payload.record)) {

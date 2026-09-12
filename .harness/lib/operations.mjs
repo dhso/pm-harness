@@ -17,7 +17,6 @@ import {
   exactChange,
   nextWorkspaceId,
   normalizeArray,
-  replacementChange,
   safeWorkspaceInputPath,
   sameBaseline,
   sha256Path,
@@ -28,8 +27,6 @@ import { validateOperationContract } from "./contracts.mjs";
 import {
   COLLECTIONS,
   DECISION_CONTROLLED_FIELDS,
-  REQUIREMENT_IMMUTABLE_FIELDS,
-  REQUIREMENT_LINK_FIELDS,
   STORE_FILES,
   readWorkspace,
 } from "./workspace.mjs";
@@ -40,7 +37,8 @@ import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.m
 import { applyWorkflow } from "./workflow.mjs";
 import { applyContentOperation } from "./content-operations.mjs";
 import { applyCompensation, captureCompensation } from "./compensation.mjs";
-import { findDuplicateDraft, syncRequirementReplacement, validateChangeProposal } from "./change-validation.mjs";
+import { applyRequirementOperation, REQUIREMENT_OPERATION_TYPES } from "./requirement-operations.mjs";
+import { applyScheduleTransition, assertScheduleActuals } from "./schedule-lifecycle.mjs";
 
 // 逐条比较受影响集合，产出记录级 before/after，供对话中展示待确认变更。
 function diffRecords(before, after, store, collection) {
@@ -262,6 +260,7 @@ export async function recordOperation(root, input, options = {}) {
       seenIds.add(record.id);
       if (existing) assertTransition(kind, existing.status, record.status, record.id);
       validateOrThrow(kind, record);
+      assertScheduleActuals(record);
       prepared.push({ collection, existing, record, baselineChanged: !sameBaseline(existing, record) });
       upsert(records, record);
     }
@@ -290,6 +289,8 @@ export async function recordOperation(root, input, options = {}) {
     changedStores.add("schedule");
     resultIds.push(...prepared.map((item) => item.record.id));
     result = batch ? { schedule_items: prepared.map((item) => item.record), baseline: data.schedule.baseline } : { schedule_item: prepared[0].record, baseline: data.schedule.baseline };
+  } else if (envelope.type === "schedule.transition") {
+    result = applyScheduleTransition({ envelope, data, now, changedStores, resultIds });
   } else if (envelope.type === "schedule.baseline.approve") {
     if (envelope.approval?.change_request_id) throw new Error(JSON.stringify({ code: "baseline_confirmation_does_not_apply_change_request", fix: "schedule.baseline.approve 只确认已填写的草拟基线；需要按变更请求修改日期时使用 schedule.batch-upsert" }));
     const snapshot = baselineSnapshot(data.schedule);
@@ -311,53 +312,8 @@ export async function recordOperation(root, input, options = {}) {
       resultIds.push(...targetIds);
       result = { baseline: data.schedule.baseline, already_approved: false };
     }
-  } else if (envelope.type === "requirement.upsert") {
-    const payload = envelope.payload;
-    const existing = payload.id ? data.requirements.requirements.find((item) => item.id === payload.id) : null;
-    const merged = { ...existing, ...payload };
-    if (!existing && merged.supersedes_id && !data.requirements.requirements.some((item) => item.id === merged.supersedes_id)) {
-      throw new Error(JSON.stringify({ code: "invalid_supersession", predecessor_id: merged.supersedes_id, fix: "先登记存在的旧需求，再创建带 supersedes_id 的替代候选" }));
-    }
-    if (!existing && merged.supersedes_id && merged.status === "proposed") {
-      throw new Error(JSON.stringify({ code: "replacement_candidate_required", predecessor_id: merged.supersedes_id, fix: "替代需求必须先以 candidate 创建，再单独转换为 proposed" }));
-    }
-    if (!existing && merged.supersedes_id && ["candidate", "proposed"].includes(merged.status || "candidate")) {
-      const duplicateCandidate = data.requirements.requirements.find((item) => item.supersedes_id === merged.supersedes_id && ["candidate", "proposed"].includes(item.status));
-      if (duplicateCandidate) throw new Error(JSON.stringify({ code: "duplicate_replacement_candidate", predecessor_id: merged.supersedes_id, candidate_id: duplicateCandidate.id, fix: `继续现有候选 ${duplicateCandidate.id}，或先将其驳回后再创建新的替代候选` }));
-    }
-    const record = { id: nextWorkspaceId(data, data.requirements.requirements, "requirement", payload.id), title: merged.title, description: merged.description, owner: merged.owner ?? null, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
-    if (existing) assertTransition("requirement", existing.status, record.status, record.id);
-    const existingApproved = existing && ["approved", "implemented", "validated"].includes(existing.status);
-    const approvedContentChanged = existingApproved && digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS) !== digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS);
-    if (approvedContentChanged) throw new Error(JSON.stringify({ code: "approved_requirement_requires_new_version", id: record.id, fix: "Create a new REQ record and link the supersession through an approved change request" }));
-    const approvedLinksChanged = existingApproved && digestFields(existing, REQUIREMENT_LINK_FIELDS) !== digestFields(record, REQUIREMENT_LINK_FIELDS);
-    const enteringApproval = ["approved", "implemented", "validated"].includes(record.status) && !existingApproved;
-    const controlled = enteringApproval || approvedLinksChanged;
-    if (controlled) {
-      const replacementApproval = enteringApproval && Boolean(record.supersedes_id);
-      const predecessor = replacementApproval ? data.requirements.requirements.find((item) => item.id === record.supersedes_id) : existing;
-      if (replacementApproval && (!existing || !predecessor)) throw new Error(JSON.stringify({ code: "replacement_candidate_required", fix: "Register the replacement as a candidate first, then propose the exact change against its predecessor" }));
-      const targetId = replacementApproval ? predecessor.id : record.id;
-      const actualChange = replacementApproval ? replacementChange(targetId, predecessor, record, REQUIREMENT_IMMUTABLE_FIELDS) : exactChange(targetId, predecessor, record, REQUIREMENT_LINK_FIELDS);
-      const approval = verifyApproval(data, envelope.approval, "requirement", { requireChangeRequest: Boolean(approvedLinksChanged || replacementApproval), targetIds: [targetId], actualChanges: [actualChange] });
-      record.approved_by_id = approval.stakeholder.id;
-      record.approved_at = approval.changeRequest?.effective_at || envelope.approval.approved_at;
-      if (replacementApproval) {
-        assertTransition("requirement", predecessor.status, "superseded", predecessor.id);
-        Object.assign(predecessor, { status: "superseded", superseded_by_id: record.id, updated_at: now });
-        validateOrThrow("requirement", predecessor);
-        const synced = await syncRequirementReplacement(root, data, predecessor, record, now);
-        if (synced.changedTasks.length) changedStores.add("schedule");
-        extraEntries.push(...synced.entries);
-      }
-      addControlledChange(data, envelope, { kind: "requirement", target_ids: replacementApproval ? [record.id, predecessor.id] : [record.id], change_request_target_ids: replacementApproval ? [predecessor.id] : undefined, before: existing || {}, after: record, before_hash: digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS), after_hash: digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS), before_summary: existing?.description || null, after_summary: record.description });
-      changedStores.add("changes");
-    }
-    validateOrThrow("requirement", record);
-    upsert(data.requirements.requirements, record);
-    changedStores.add("requirements");
-    resultIds.push(record.id);
-    result = { requirement: record };
+  } else if (REQUIREMENT_OPERATION_TYPES.has(envelope.type)) {
+    result = await applyRequirementOperation({ root, envelope, data, now, changedStores, extraEntries, resultIds });
   } else if (envelope.type === "register.upsert") {
     const collection = envelope.payload.collection;
     const kind = { risks: "risk", issues: "issue", decisions: "decision" }[collection];
@@ -386,37 +342,6 @@ export async function recordOperation(root, input, options = {}) {
     changedStores.add("registers");
     resultIds.push(record.id);
     result = { [kind]: record };
-  } else if (envelope.type === "change.propose") {
-    const payload = envelope.payload;
-    const targetIds = normalizeArray(payload.target_ids);
-    const changeItems = Array.isArray(payload.change_items) ? payload.change_items : [];
-    if (!targetIds.length || targetIds.length !== changeItems.length || targetIds.some((id) => !changeItems.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_items_mismatch", fix: "Provide one exact before/after change_item for every target_id" }));
-    if (changeItems.some((item) => digestValue(item.before) === digestValue(item.after))) throw new Error(JSON.stringify({ code: "change_request_no_effect", fix: "change_items 的 before 与 after 完全相同；变更请求必须描述真实改动" }));
-    const sourceIds = normalizeArray(payload.source_ids || envelope.source_ids);
-    validateChangeProposal(data, { approvalScope: payload.approval_scope, targetIds, changeItems });
-    const draft = { approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, source_ids: sourceIds };
-    const duplicate = findDuplicateDraft(data, draft);
-    if (duplicate) throw new Error(JSON.stringify({ code: "duplicate_change_request", duplicate_id: duplicate.id, fix: `已有相同目标、来源和摘要的草稿 ${duplicate.id}；请继续该草稿或先驳回后再提交新的变更请求` }));
-    const record = { id: nextWorkspaceId(data, data.requirements.change_requests, "change_request", payload.id), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: sourceIds, created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
-    validateOrThrow("change_request", record);
-    data.requirements.change_requests.push(record);
-    changedStores.add("requirements");
-    resultIds.push(record.id);
-    result = { change_request: record };
-  } else if (envelope.type === "change.approve") {
-    const record = data.requirements.change_requests.find((item) => item.id === envelope.payload.id);
-    if (!record) throw new Error(`Change request not found: ${envelope.payload.id}`);
-    assertTransition("change_request", record.status, "approved", record.id);
-    if (!record.change_items?.length || record.target_ids.some((id) => !record.change_items.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_exact_change_required", id: record.id, fix: "批准前每个 target_id 都需要一条 change_items: [{ target_id, before, after }]" }));
-    const approval = verifyApproval(data, envelope.approval, record.approval_scope);
-    if (Date.parse(envelope.approval.approved_at) < Date.parse(record.created_at)) throw new Error(JSON.stringify({ code: "approval_predates_change_request", id: record.id, created_at: record.created_at, approved_at: envelope.approval.approved_at, fix: "approval.approved_at 不得早于变更请求的 created_at；同一 workflow 中请显式设置相同或递增的时间戳" }));
-    const before = clone(record);
-    Object.assign(record, { status: "approved", approved_by_id: approval.stakeholder.id, confirmed_by_user_at: envelope.approval.confirmed_by_user_at, effective_at: envelope.approval.approved_at, approved_change_digest: digestValue(record.change_items) });
-    addControlledChange(data, envelope, { kind: "change_request_approval", target_ids: [record.id], before, after: record, before_summary: before.status, after_summary: "approved" });
-    changedStores.add("requirements");
-    changedStores.add("changes");
-    resultIds.push(record.id);
-    result = { change_request: record };
   } else if (envelope.type === "operation.compensate") {
     if (!options.dryRun) assertUserConfirmation(envelope.approval, "operation compensation");
     const applied = await applyCompensation(root, data, envelope.payload.operation_id);

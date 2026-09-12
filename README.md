@@ -279,6 +279,8 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/lib/helpers.mjs` | 日期、路径、哈希、数组和记录处理等无状态公共函数 |
 | `.harness/lib/approval.mjs` | 审批范围校验、用户确认和受控变更日志 |
 | `.harness/lib/operations.mjs` | 类型化 `record`、精确变更绑定和轻量原子工作流 |
+| `.harness/lib/requirement-operations.mjs` | 需求替代聚合、规范去重、草案作废和批准前重检 |
+| `.harness/lib/schedule-lifecycle.mjs` | 任务/里程碑状态转换与实际时间完整性 |
 | `.harness/lib/content-operations.mjs` | 收件箱、交付物、Wiki、观察和规则等内容域写入 |
 | `.harness/lib/compat.mjs` | 初始化、来源和活动旧入口的兼容包装 |
 | `.harness/lib/workflow.mjs` | 会议纪要等多实体操作的单层编排与事务结果聚合 |
@@ -300,7 +302,7 @@ AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、�
 
 `.harness/` 中每个 MJS 模块最多 500 行，这一边界由本地 lint 和测试机械检查。新增职责应进入范围清晰的小模块，`core.mjs` 只维护稳定导出，不重新堆积实现。
 
-内部写入使用统一信封：`schema_version`、稳定 `operation_id`、`type`、`actor`、`reason`、`source_ids`、可选 `approval` 和类型化 `payload`。信封、payload 和事实记录都是封闭字段契约，拼写错误和未知字段在写入前被拒绝。输入与当前状态先通过同一契约校验，再进入临时事务目录；所有目标都准备成功后才统一替换。重复 `operation_id` 返回第一次记录的结果，不重复分配 ID 或生成活动；重复来源也会保留一次去重操作审计。
+内部写入使用统一信封：`schema_version`、稳定 `operation_id`、`type`、`actor`、`reason`、`source_ids`、可选 `approval` 和类型化 `payload`。信封、payload 和事实记录都是封闭字段契约，拼写错误和未知字段在写入前被拒绝。输入与当前状态先通过同一契约校验，再进入临时事务目录；所有目标都准备成功后才统一替换。重复 `operation_id` 返回第一次记录的结果，不重复分配 ID 或生成活动；相同结构化变更复用现有草案，不受自由文本措辞影响，验收标准调整顺序或重复列项也不会制造新草案。已批准需求的替代使用聚合操作，由 Harness 原子创建候选和变更请求并生成精确快照；任务状态变化使用带实际事件时间的专门转换操作。
 
 确认会议纪要等跨实体同步使用轻量 `workflow.apply`：把需求、预测/实际、风险、决定、收件箱和活动等普通类型化操作放入一次事务，任一步失败整体回滚，操作日志只保留一条父记录并内嵌步骤结果。它不是通用编排平台，也不会代替受控变更审批；已批准基线的新增、修改和删除均需逐目标精确 before/after 的变更请求。
 
@@ -310,6 +312,7 @@ AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、�
 |---|---|
 | `tests/core.test.mjs` | 覆盖契约、事务回滚、幂等、审批、基线、来源、活动、交付、Wiki、规则和端到端流程 |
 | `tests/compensation.test.mjs` | 覆盖 Git-free 撤销、补偿护栏、归档保留、稳定 ID、CLI 和并发写锁 |
+| `tests/audit-regressions.test.mjs` | 覆盖需求替代聚合、规范去重、遗留坏草案恢复和计划实际时间完整性 |
 | `.gitignore` | 为选择使用 Git 的维护者排除原始归档、渲染、缓存、临时文件和凭证 |
 | `.gitattributes` | 为选择使用 Git 的维护者统一文本换行并标记二进制文件 |
 | `package.json` | 声明后台工具环境和自动检查入口；无需项目经理操作 |

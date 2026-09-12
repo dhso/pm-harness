@@ -183,6 +183,8 @@ export async function collectIssues(root, data, options = {}) {
       else if (!taskIds.has(dependency)) addIssue(issues, "error", "missing_dependency", STORE_FILES.schedule, `${record.id} references missing task ${dependency}`);
     }
     if (!["done", "cancelled"].includes(record.status) && !record.owner) addIssue(issues, "warning", "owner_missing", STORE_FILES.schedule, `${record.id} has no accountable owner`);
+    if (record.status === "in_progress" && !record.actual_start) addIssue(issues, "warning", "in_progress_without_actual_start", STORE_FILES.schedule, `${record.id} is in progress without actual_start`);
+    if (record.status === "done" && !record.actual_start) addIssue(issues, "warning", "done_without_actual_start", STORE_FILES.schedule, `${record.id} is done without actual_start`);
     if (record.status === "done" && !record.actual_end) addIssue(issues, "error", "done_without_actual", STORE_FILES.schedule, `${record.id} is done without actual_end`);
     if (record.status === "done" && !record.evidence) addIssue(issues, "warning", "done_without_evidence", STORE_FILES.schedule, `${record.id} is done without evidence`);
     if (record.baseline_end && record.forecast_end && record.forecast_end > record.baseline_end) addIssue(issues, "info", "schedule_variance", STORE_FILES.schedule, `${record.id} forecast is later than baseline`);
@@ -246,20 +248,24 @@ export async function collectIssues(root, data, options = {}) {
     validateRefs(issues, item, "target_ids", allIds, STORE_FILES.requirements);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.requirements);
     const changeItemIds = new Set((item.change_items || []).map((change) => change.target_id));
-    if (changeItemIds.size !== item.target_ids.length || item.target_ids.some((id) => !changeItemIds.has(id))) addIssue(issues, ["approved", "implemented"].includes(item.status) ? "error" : "warning", "change_request_items_mismatch", STORE_FILES.requirements, `${item.id} must contain one exact change_item per target before approval`);
+    if (item.status !== "voided" && (changeItemIds.size !== item.target_ids.length || item.target_ids.some((id) => !changeItemIds.has(id)))) addIssue(issues, ["approved", "implemented"].includes(item.status) ? "error" : "warning", "change_request_items_mismatch", STORE_FILES.requirements, `${item.id} must contain one exact change_item per target before approval`);
     if (["proposed", "impact_review", "approved"].includes(item.status) && item.change_items?.length) {
       const duplicate = findDuplicateDraft(data, item, { excludeId: item.id });
-      if (duplicate) addIssue(issues, "warning", "duplicate_change_request", STORE_FILES.requirements, `${item.id} duplicates unfinished change request ${duplicate.id}; continue one draft and reject the other`);
+      if (duplicate) addIssue(issues, "warning", "duplicate_change_request", STORE_FILES.requirements, `${item.id} duplicates unfinished change request ${duplicate.id}; continue one draft and technically void the other`);
     }
-    if (["proposed", "impact_review"].includes(item.status) && item.change_items?.length) {
+    if (["proposed", "impact_review", "approved"].includes(item.status) && item.change_items?.length) {
       try {
-        validateChangeProposal(data, { approvalScope: item.approval_scope, targetIds: item.target_ids, changeItems: item.change_items });
+        const targetIds = item.status === "approved" ? item.target_ids.filter((id) => !(item.applied_target_ids || []).includes(id)) : item.target_ids;
+        const changeItems = item.change_items.filter((change) => targetIds.includes(change.target_id));
+        if (targetIds.length) validateChangeProposal(data, { approvalScope: item.approval_scope, targetIds, changeItems });
       } catch (error) {
         let details;
         try { details = JSON.parse(error.message); } catch { details = {}; }
-        addIssue(issues, "error", details.code || "change_request_snapshot_invalid", STORE_FILES.requirements, `${item.id} cannot be applied safely: ${details.fix || error.message}`);
+        addIssue(issues, item.status === "approved" ? "error" : "warning", details.code || "change_request_snapshot_invalid", STORE_FILES.requirements, `${item.id} cannot be applied safely: ${details.fix || error.message}`);
       }
     }
+    if (item.status === "voided" && (!item.disposition_reason || !item.voided_at)) addIssue(issues, "error", "change_request_void_evidence_missing", STORE_FILES.requirements, `${item.id} is voided without disposition_reason and voided_at`);
+    if (item.status === "voided" && item.voided_at && Date.parse(item.voided_at) < Date.parse(item.created_at)) addIssue(issues, "error", "change_request_void_predates_draft", STORE_FILES.requirements, `${item.id} was voided before it was created`);
     if (["approved", "implemented"].includes(item.status) && item.approved_change_digest !== digestValue(item.change_items)) addIssue(issues, "error", "change_request_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches the approved exact change`);
     if ((item.applied_target_ids || []).some((id) => !item.target_ids.includes(id))) addIssue(issues, "error", "change_request_application_mismatch", STORE_FILES.requirements, `${item.id} records an applied target outside its approved target set`);
     if (item.status === "implemented" && (!item.applied_at || item.target_ids.some((id) => !item.applied_target_ids.includes(id)))) addIssue(issues, "error", "change_request_application_incomplete", STORE_FILES.requirements, `${item.id} is implemented without all targets and applied_at`);

@@ -275,12 +275,12 @@ test("approved requirement replacement closes both sides of the supersession cha
   const approver = (await stakeholder(root, ["requirement"])).stakeholder;
   const old = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV", status: "approved", acceptance_criteria: ["CSV downloads"], source_ids: [] }, { approval: businessApproval(approver.id) }));
   const linkedTask = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Implement export", owner: "Engineer", requirement_ids: [old.requirement.id] }));
-  const replacement = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id }));
+  const replacement = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV downloads", "XLSX downloads"], source_ids: [], supersedes_id: old.requirement.id }));
   await recordOperation(root, operation("requirement.upsert", { id: replacement.requirement.id, status: "proposed" }));
   const exact = {
     target_id: old.requirement.id,
     before: { status: "approved", superseded_by_id: null },
-    after: { status: "superseded", superseded_by_id: replacement.requirement.id, replacement: { title: "Export", description: "Export CSV and XLSX", acceptance_criteria: ["CSV and XLSX download"] } },
+    after: { status: "superseded", superseded_by_id: replacement.requirement.id, replacement: { title: "Export", description: "Export CSV and XLSX", acceptance_criteria: ["XLSX downloads", "CSV downloads"] } },
   };
   const change = await recordOperation(root, operation("change.propose", { title: "Replace export requirement", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [exact], before: "CSV only", after: "CSV and XLSX", reason: "Customer need", impact: "Broader export scope", created_at: minutesAgo(5) }));
   await recordOperation(root, operation("change.approve", { id: change.change_request.id }, { approval: businessApproval(approver.id) }));
@@ -318,12 +318,16 @@ test("requirement change proposals require a matching candidate and deduplicate 
   await initialize(root);
   const approver = (await stakeholder(root, ["requirement"])).stakeholder;
   const old = await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV", status: "approved", acceptance_criteria: ["CSV downloads"], source_ids: [] }, { approval: businessApproval(approver.id) }));
-  const item = { target_id: old.requirement.id, before: { status: "approved", superseded_by_id: null }, after: { status: "superseded", superseded_by_id: "REQ-002", replacement: { title: "Export", description: "Export CSV and XLSX", acceptance_criteria: ["CSV and XLSX download"] } } };
+  const item = { target_id: old.requirement.id, before: { status: "approved", superseded_by_id: null }, after: { status: "superseded", superseded_by_id: "REQ-002", replacement: { title: "Export", description: "Export CSV and XLSX", acceptance_criteria: ["CSV downloads", "XLSX downloads"] } } };
   await assert.rejects(recordOperation(root, operation("change.propose", { title: "Replace export", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Need XLSX", impact: "Broader export" })), /replacement_candidate_required|replacement_candidate_snapshot_mismatch/);
   await assert.rejects(recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "proposed", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id })), /replacement_candidate_required/);
-  await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV and XLSX download"], source_ids: [], supersedes_id: old.requirement.id }));
+  await recordOperation(root, operation("requirement.upsert", { title: "Export", description: "Export CSV and XLSX", status: "candidate", acceptance_criteria: ["CSV downloads", "XLSX downloads"], source_ids: [], supersedes_id: old.requirement.id }));
   const first = await recordOperation(root, operation("change.propose", { title: "Replace export", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Need XLSX", impact: "Broader export" }));
-  await assert.rejects(recordOperation(root, operation("change.propose", { title: "Same export replacement", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [item], before: "CSV", after: "CSV and XLSX", reason: "Different wording", impact: "Same change" })), /duplicate_change_request/);
+  const reorderedItem = structuredClone(item);
+  reorderedItem.after.replacement.acceptance_criteria = ["XLSX downloads", "CSV downloads", "CSV downloads"];
+  const duplicate = await recordOperation(root, operation("change.propose", { title: "Same export replacement", approval_scope: "requirement", target_ids: [old.requirement.id], change_items: [reorderedItem], before: "The old export only supports CSV", after: "The replacement also supports XLSX", reason: "Different wording", impact: "Same change" }));
+  assert.equal(duplicate.reused_existing, true);
+  assert.equal(duplicate.change_request.id, first.change_request.id);
   assert.equal((await readJson(root, "project/requirements.json")).change_requests.filter((item) => item.status === "proposed").length, 1);
   assert.ok(first.change_request.id);
 });

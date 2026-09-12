@@ -1,5 +1,5 @@
 import { digestValue, isPlainObject, isTimestamp } from "./model.mjs";
-import { nextWorkspaceId, normalizeArray, validateOrThrow } from "./helpers.mjs";
+import { digestChangeIntent, nextWorkspaceId, normalizeArray, validateOrThrow } from "./helpers.mjs";
 
 function verifyExactChange(changeRequest, actualChanges) {
   if (!Array.isArray(changeRequest.change_items) || !changeRequest.change_items.length) {
@@ -10,7 +10,7 @@ function verifyExactChange(changeRequest, actualChanges) {
   }
   for (const actual of actualChanges) {
     const expected = changeRequest.change_items.find((item) => item.target_id === actual.target_id);
-    if (!expected || digestValue(expected.before) !== digestValue(actual.before) || digestValue(expected.after) !== digestValue(actual.after)) {
+    if (!expected || digestChangeIntent(expected.before) !== digestChangeIntent(actual.before) || digestChangeIntent(expected.after) !== digestChangeIntent(actual.after)) {
       throw new Error(JSON.stringify({ code: "change_request_content_mismatch", id: changeRequest.id, target_id: actual.target_id, fix: "Apply exactly the approved before/after values or create a revised change request" }));
     }
   }

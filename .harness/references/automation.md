@@ -43,7 +43,7 @@ node .harness/scripts/harness.mjs record --dry-run --data '<json>'
 
 同一 `operation_id` 与相同请求再次提交时返回首次结果，不分配新 ID，也不重复记录活动；同一 ID 搭配不同请求摘要会报冲突。所有目标先写入临时事务目录；验证或替换任一目标失败时恢复整个操作。
 
-批准信封至少包含实际业务批准人的 `approved_by_id`、`approved_at` 和用户确认该审批已发生的 `confirmed_by_user_at`。修改已批准对象时还需 `change_request_id`。变更请求必须为每个目标保存机器可比较的 `change_items: [{ target_id, before, after }]`；批准后摘要锁定，实际写入必须逐项一致，目标应用后不可复用。授予干系人审批范围和激活/退役规则只使用用户明确确认，不从邮件或截图推断。
+批准信封至少包含实际业务批准人的 `approved_by_id`、`approved_at` 和用户确认该审批已发生的 `confirmed_by_user_at`。修改已批准对象时还需 `change_request_id`。变更请求必须为每个目标保存机器可比较的 `change_items: [{ target_id, before, after }]`；需求替代优先由 `requirement.replacement.propose` 自动生成，不由调用方拼装。批准入口会重新校验候选、目标和快照；批准后摘要锁定，实际写入必须逐项一致，目标应用后不可复用。授予干系人审批范围和激活/退役规则只使用用户明确确认，不从邮件或截图推断。
 
 会议纪要或其他需要同步多个事实源的工作使用 `workflow.apply`。其 `payload` 包含语义化 `kind` 和按依赖顺序排列的普通类型化 `operations`；嵌套工作流不支持。所有步骤共享一次最终事务，完整校验后统一提交，任一步失败整体回滚；操作日志只保留一条父工作流记录，步骤结果嵌入其中，避免重复膨胀。受控步骤仍需各自有效的审批和变更请求，外层工作流不扩大权限。
 

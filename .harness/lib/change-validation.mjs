@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { assertTransition, digestValue, isPlainObject } from "./model.mjs";
+import { digestChangeIntent } from "./helpers.mjs";
 
 const APPROVED_REQUIREMENT_STATUSES = new Set(["approved", "implemented", "validated"]);
 const CONTROLLED_FIELDS = Object.freeze({
@@ -24,18 +25,25 @@ function recordsForScope(data, scope) {
 }
 
 function compareProvidedFields(actual, expected, fields) {
-  return fields.every((field) => !(field in expected) || digestValue(actual?.[field] ?? null) === digestValue(expected[field] ?? null));
+  return fields.every((field) => !(field in expected) || digestChangeIntent({ [field]: actual?.[field] ?? null }) === digestChangeIntent({ [field]: expected[field] ?? null }));
 }
 
-function candidateSnapshot(candidate) {
+export function requirementReplacementSnapshot(candidate) {
   return { title: candidate.title, description: candidate.description, acceptance_criteria: candidate.acceptance_criteria, ...(candidate.owner != null ? { owner: candidate.owner } : {}) };
+}
+
+function replacementMatchesCandidate(candidate, replacement) {
+  const snapshot = { ...replacement };
+  delete snapshot.id;
+  if (snapshot.owner == null && candidate.owner == null) delete snapshot.owner;
+  return digestChangeIntent(snapshot) === digestChangeIntent(requirementReplacementSnapshot(candidate));
 }
 
 function matchingCandidate(data, predecessor, replacement) {
   return (data.requirements.requirements || []).find((item) =>
     item.supersedes_id === predecessor.id
     && ["candidate", "proposed"].includes(item.status)
-    && compareProvidedFields(item, replacement, ["title", "description", "acceptance_criteria"]));
+    && replacementMatchesCandidate(item, replacement));
 }
 
 export function validateChangeProposal(data, { approvalScope, targetIds, changeItems }) {
@@ -72,7 +80,7 @@ export function validateChangeProposal(data, { approvalScope, targetIds, changeI
       }
       delete replacementWithoutId.id;
       if (replacementWithoutId.owner == null && candidate.owner == null) delete replacementWithoutId.owner;
-      if (digestValue(replacementWithoutId) !== digestValue(candidateSnapshot(candidate))) {
+      if (digestChangeIntent(replacementWithoutId) !== digestChangeIntent(requirementReplacementSnapshot(candidate))) {
         throw new Error(JSON.stringify({ code: "replacement_candidate_snapshot_mismatch", target_id: id, fix: "after.replacement 必须与候选需求的 title、description、acceptance_criteria 完全一致" }));
       }
     }
@@ -81,20 +89,15 @@ export function validateChangeProposal(data, { approvalScope, targetIds, changeI
 
 export function findDuplicateDraft(data, candidate, { excludeId = null } = {}) {
   const normalizedItems = (items) => [...items].sort((left, right) => left.target_id.localeCompare(right.target_id));
-  const fingerprint = digestValue({
+  // 自由文本和证据来源可以追加或换一种说法；唯一性只由业务范围、目标和精确结构化改动决定。
+  const fingerprint = digestChangeIntent({
     approval_scope: candidate.approval_scope,
     target_ids: [...candidate.target_ids].sort(),
-    source_ids: [...candidate.source_ids].sort(),
-    before: candidate.before,
-    after: candidate.after,
     change_items: normalizedItems(candidate.change_items),
   });
-  return (data.requirements.change_requests || []).find((item) => item.id !== excludeId && ["proposed", "impact_review", "approved"].includes(item.status) && digestValue({
+  return (data.requirements.change_requests || []).find((item) => item.id !== excludeId && ["proposed", "impact_review", "approved"].includes(item.status) && digestChangeIntent({
     approval_scope: item.approval_scope,
     target_ids: [...item.target_ids].sort(),
-    source_ids: [...(item.source_ids || [])].sort(),
-    before: item.before,
-    after: item.after,
     change_items: normalizedItems(item.change_items || []),
   }) === fingerprint);
 }

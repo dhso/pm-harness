@@ -32,7 +32,7 @@ ID 一经分配不得复用；标题或路径变化不改变 ID。规则与其�
 
 - 纯日期使用真实的 `YYYY-MM-DD`；事件使用可解析的 ISO 8601 时间戳。
 - `source_time`、`captured_at`、`approved_at`、`confirmed_by_user_at`、`effective_at` 分别记录，不互相替代。
-- 计划对象同时保留 `baseline_*`、`forecast_*`、`actual_*`。
+- 计划对象同时保留 `baseline_*`、`forecast_*`、`actual_*`；状态变化使用 `schedule.transition`，由明确的事件时间按项目时区生成实际日期。进行中和完成事项不得缺失 `actual_start`，完成事项还必须有 `actual_end`。
 - 需求 `owner` 是可选负责人字段；历史记录缺失时按 `null` 兼容。替代需求明确负责人后，成功应用替代链才将负责人传播到关联任务。
 - 跨文件关系只使用稳定 ID；失效来源、依赖、交付、Wiki、提案和替代引用会报错。
 - `schedule.baseline.digest` 是所有基线日期字段的规范化 SHA-256；批准记录的 after hash 必须一致。
@@ -49,6 +49,6 @@ ID 一经分配不得复用；标题或路径变化不改变 ID。规则与其�
 
 ## 受控变更
 
-`CR-###` 同时保存面向人的 before/after 摘要和每个目标的结构化 `change_items`。批准时锁定其摘要；应用值不一致、目标不完整或已消费时拒绝写入，全部目标应用后进入 `implemented`。
+`CR-###` 同时保存面向人的 before/after 摘要和每个目标的结构化 `change_items`。需求替代的精确快照由 Harness 根据旧需求和候选需求生成；去重只比较规范化业务范围、目标和结构化变更，不比较自由文本措辞，其中验收标准按无序集合比较但保留原始展示顺序。批准时锁定其摘要；应用值不一致、目标不完整或已消费时拒绝写入，全部目标应用后进入 `implemented`。旧版无效或重复的未批准草案可进入 `voided`，并保留技术作废原因和时间；这与业务 `rejected` 明确区分。
 
 `CHG-###` 保存操作 ID、目标、before/after 摘要和哈希、来源、变更请求、实际批准人、生效与记录时间。`operations` 保存幂等键和首次结果。`workflow.apply` 可将多项普通操作纳入同一事务，但不会绕过各步骤的审批。高风险操作缺少合法数据时，在事务开始前失败。
