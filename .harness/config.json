@@ -4,10 +4,11 @@
   "upcoming_days": 7,
   "recent_activity_days": 7,
   "stale_task_days": 7,
-  "large_tracked_file_mb": 25,
+  "large_tracked_file_mb": 5,
   "repeat_observation_threshold": 2,
   "rule_review_days": 30,
   "memory_current_max_bytes": 4096,
+  "status_max_bytes": 8192,
   "memory_current_stale_days": 14,
   "verify_archive_hash_on_lint": true,
   "archive_roots": [

@@ -16,5 +16,5 @@ export { queryWorkspace } from "./query.mjs";
 export {
   recordOperation,
 } from "./operations.mjs";
-export { appendActivityEntry, initializeProject, registerSource, sha256File } from "./compat.mjs";
+export { appendActivityEntry, compensateLastOperation, initializeProject, registerSource, sha256File } from "./compat.mjs";
 export { maintainWorkspace } from "./maintain.mjs";

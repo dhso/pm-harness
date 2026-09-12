@@ -1,8 +1,8 @@
-# ChatGPT 后台自动化
+# AI Agent 后台自动化
 
-这些接口只供 ChatGPT 在项目根目录调用。不得要求项目经理复制命令、编辑 JSON 或维护生成文件。运行环境需要 Node 20；缺失时停止结构化写入并向用户说明机械护栏不可用。
+这些接口只供 AI Agent 在项目根目录调用。不得要求项目经理复制命令、编辑 JSON 或维护生成文件。运行环境需要 Node 20；缺失时停止结构化写入并向用户说明机械护栏不可用。
 
-含用户原文或长文本的输入放在被 Git 忽略的 `.harness/tmp/`，完成后清理；执行工具能直接写 stdin 时也可通过 stdin 传入。失败时读取结构化错误并修正输入、补充审批或请求用户判断；不得绕过校验或无限重试。
+含用户原文或长文本的输入放在临时目录 `.harness/tmp/`，完成后清理；执行工具能直接写 stdin 时也可通过 stdin 传入。失败时读取结构化错误并修正输入、补充审批或请求用户判断；不得绕过校验或无限重试。
 
 ## 统一 `record`
 
@@ -45,7 +45,7 @@ node .harness/scripts/harness.mjs record --dry-run --data '<json>'
 
 批准信封至少包含实际业务批准人的 `approved_by_id`、`approved_at` 和用户确认该审批已发生的 `confirmed_by_user_at`。修改已批准对象时还需 `change_request_id`。变更请求必须为每个目标保存机器可比较的 `change_items: [{ target_id, before, after }]`；批准后摘要锁定，实际写入必须逐项一致，目标应用后不可复用。授予干系人审批范围和激活/退役规则只使用用户明确确认，不从邮件或截图推断。
 
-会议纪要或其他需要同步多个事实源的工作使用 `workflow.apply`。其 `payload` 包含语义化 `kind` 和按依赖顺序排列的普通类型化 `operations`；嵌套工作流不支持。所有步骤共享一次最终事务，完整校验后统一提交，任一步失败整体回滚。受控步骤仍需各自有效的审批和变更请求，外层工作流不扩大权限。
+会议纪要或其他需要同步多个事实源的工作使用 `workflow.apply`。其 `payload` 包含语义化 `kind` 和按依赖顺序排列的普通类型化 `operations`；嵌套工作流不支持。所有步骤共享一次最终事务，完整校验后统一提交，任一步失败整体回滚；操作日志只保留一条父工作流记录，步骤结果嵌入其中，避免重复膨胀。受控步骤仍需各自有效的审批和变更请求，外层工作流不扩大权限。
 
 ## 兼容包装
 
@@ -68,12 +68,17 @@ node .harness/scripts/harness.mjs brief --json
 node .harness/scripts/harness.mjs rebuild
 node .harness/scripts/harness.mjs lint --json [--fast]
 node .harness/scripts/harness.mjs maintain
+node .harness/scripts/harness.mjs undo <operation_id> --dry-run
+node .harness/scripts/harness.mjs undo <operation_id> --confirmed-at <ISO-8601>
 ```
 
 - `query` 只读取目标事实源，并按 ID 或过滤条件返回单条/少量记录。集合名用单数或复数皆可（`task`/`tasks`）；只给 ID 时按前缀自动定位。字段拼错会返回候选，不会静默产生空结果。例：`query REQ-003 --fields status,title`、`query tasks --where status=blocked`。
 - `contract` 只返回一个操作的字段、必填项、默认值和状态转换；AI 优先使用 `--compact`。
 - `brief` 提供近期活动和不超过三个带原因的首要行动，不把完整 JSON 原样转给用户。
 - `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
-- `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和 Git 范围。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
+- `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
 - `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。
+- `status.update` 和 `memory.current.update` 用事务更新人读摘要；不要在事实 JSON 已提交后再用非事务方式覆盖这两个文件。
+- `lint` 会提示过大的结构化 Store。读取优先使用 `query --fields ... --limit ...`，不要把完整 JSON 复制进对话；压缩或归档必须保留事实、ID 和审计可追溯性。
+- `undo` 通过追加 `operation.compensate` 撤销最近一次可撤销写入，原操作始终保留。先用 `--dry-run` 展示将恢复或移除的事实及保留的归档原件；取得用户确认后用 `--confirmed-at` 传入确认发生的 ISO 8601 时间。实际执行缺少确认时间会被机器拒绝。受控变更、非最近有效操作、旧操作缺少补偿快照、目标发生后续冲突或操作写入人工文档内容时也会拒绝，按 `code` 和 `fix` 处理。原始归档不会被删除，结果中的 `retained_paths` 会明确列出。
 - 修改 `.harness/lib/model.mjs` 或 `.harness/lib/contracts.mjs` 的契约后运行 `npm run docs:contract` 重新生成参考。

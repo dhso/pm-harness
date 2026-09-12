@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import {
@@ -139,7 +139,7 @@ export async function collectIssues(root, data, options = {}) {
   if (!STATUS.project.includes(data.project.status)) addIssue(issues, "error", "invalid_status", STORE_FILES.project, `Unsupported project status: ${data.project.status}`);
   if (!validTimezone(data.project.timezone || data.config.default_timezone)) addIssue(issues, "error", "invalid_timezone", STORE_FILES.project, "Project/default timezone must be a valid IANA timezone");
   if (!validTimezone(data.config.default_timezone)) addIssue(issues, "error", "invalid_timezone", STORE_FILES.config, "default_timezone must be a valid IANA timezone");
-  for (const field of ["upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "memory_current_stale_days"]) {
+  for (const field of ["upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days"]) {
     if (!Number.isFinite(data.config[field]) || data.config[field] <= 0) addIssue(issues, "error", "invalid_config", STORE_FILES.config, `${field} must be a positive number`);
   }
   if (!Array.isArray(data.config.archive_roots) || !data.config.archive_roots.every((item) => typeof item === "string" && item)) addIssue(issues, "error", "invalid_config", STORE_FILES.config, "archive_roots must be a non-empty string array");
@@ -385,6 +385,17 @@ export async function collectIssues(root, data, options = {}) {
       operationIds.add(item.operation_id);
       if (!isTimestamp(item.recorded_at) || !Array.isArray(item.target_ids)) addIssue(issues, "error", "invalid_operation_record", STORE_FILES.changes, `${item.operation_id} has invalid metadata`);
       if (item.request_hash !== undefined && item.request_hash !== null && !/^[a-f0-9]{64}$/i.test(item.request_hash)) addIssue(issues, "error", "invalid_operation_record", STORE_FILES.changes, `${item.operation_id} has invalid request_hash`);
+      if (item.compensation !== undefined) {
+        const snapshot = item.compensation;
+        const validSnapshot = snapshot && [1, 2].includes(snapshot.version) && typeof snapshot.reversible === "boolean"
+          && [snapshot.records, snapshot.metadata, snapshot.retained_paths, snapshot.blocked_paths].every(Array.isArray)
+          && (snapshot.version === 1 || Array.isArray(snapshot.documents));
+        if (!validSnapshot) addIssue(issues, "error", "invalid_compensation_snapshot", STORE_FILES.changes, `${item.operation_id} has an invalid compensation snapshot`);
+      }
+      if (item.type === "operation.compensate") {
+        const compensated = item.result?.compensation?.compensated_operation_ids;
+        if (!Array.isArray(compensated) || !compensated.length) addIssue(issues, "error", "invalid_compensation_record", STORE_FILES.changes, `${item.operation_id} does not identify compensated operations`);
+      }
     }
   }
 
@@ -423,10 +434,19 @@ export async function lintWorkspace(root, { fast = false } = {}) {
     try {
       data[key] = await readJson(root, relative);
     } catch (error) {
-      addIssue(issues, "error", "invalid_json", relative, error.message);
+      let details;
+      try { details = JSON.parse(error.message); } catch { details = null; }
+      addIssue(issues, "error", details?.code || "store_read_failed", relative, details?.message || error.message, details?.fix || null);
     }
   }
   if (issues.length) return summarizeIssues(issues, fast);
+  const sizeLimit = Number(data.config?.large_tracked_file_mb) * 1024 * 1024;
+  if (Number.isFinite(sizeLimit) && sizeLimit > 0) {
+    for (const relative of Object.values(STORE_FILES)) {
+      const details = await stat(path.join(root, relative)).catch(() => null);
+      if (details?.isFile() && details.size > sizeLimit) addIssue(issues, "warning", "store_size_large", relative, `Store is ${(details.size / 1024 / 1024).toFixed(1)} MB, above the configured ${data.config.large_tracked_file_mb} MB limit`, "Use query with --fields/--limit for reads and run maintain before adding more derived data");
+    }
+  }
   issues.push(...await collectIssues(root, data, fast ? { checkContentHashes: false, checkWikiRegistration: true } : {}));
   await addEnvironmentIssues(root, data, issues);
   return summarizeIssues(issues, fast);

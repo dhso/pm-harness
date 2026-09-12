@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { digestValue, isDate, validateRecord } from "./model.mjs";
+import { digestValue, isDate, nextId, validateRecord } from "./model.mjs";
 
 export function text(value) {
   return value === null || value === undefined || value === "" ? "—" : String(value);
@@ -13,7 +13,7 @@ export function escapeTable(value) {
 }
 
 export function mermaidText(value) {
-  return text(value).replace(/[,:#;]/g, " ").replace(/\s+/g, " ").trim();
+  return text(value).replace(/[,:#;\[\]{}()"`]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 export function daysBetween(left, right) {
@@ -73,6 +73,24 @@ export function upsert(records, record) {
 
 export function normalizeArray(value) {
   return Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === "string" && item))] : [];
+}
+
+// 已被补偿移除的记录仍保留在操作历史中，自动与显式 ID 都不得重新分配。
+export function nextWorkspaceId(data, records, kind, requestedId = null) {
+  const reservedIds = new Set((data.changes?.operations || []).flatMap((item) => item.target_ids || []));
+  if (requestedId) {
+    const exists = (records || []).some((item) => item.id === requestedId);
+    if (!exists && reservedIds.has(requestedId)) {
+      throw new Error(JSON.stringify({
+        code: "workspace_id_reserved",
+        id: requestedId,
+        fix: "This ID belongs to an earlier operation and cannot identify a new record; omit id to allocate the next stable ID",
+      }));
+    }
+    return requestedId;
+  }
+  const reserved = [...reservedIds].map((id) => ({ id }));
+  return nextId([...(records || []), ...reserved], kind);
 }
 
 export function digestFields(record, fields) {

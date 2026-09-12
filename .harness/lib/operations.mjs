@@ -8,7 +8,6 @@ import {
   baselineSnapshot,
   digestValue,
   makeOperationId,
-  nextId,
   validateOperationEnvelope,
 } from "./model.mjs";
 import {
@@ -16,6 +15,7 @@ import {
   defaultScheduleRecord,
   digestFields,
   exactChange,
+  nextWorkspaceId,
   normalizeArray,
   replacementChange,
   safeWorkspaceInputPath,
@@ -36,9 +36,10 @@ import {
 import { addControlledChange, assertUserConfirmation, verifyApproval } from "./approval.mjs";
 import { collectIssues } from "./lint.mjs";
 import { generatedEntries } from "./views.mjs";
-import { commitTransaction, jsonEntry } from "./transaction.mjs";
+import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.mjs";
 import { applyWorkflow } from "./workflow.mjs";
 import { applyContentOperation } from "./content-operations.mjs";
+import { applyCompensation, captureCompensation } from "./compensation.mjs";
 
 // 逐条比较受影响集合，产出记录级 before/after，供对话中展示待确认变更。
 function diffRecords(before, after, store, collection) {
@@ -93,6 +94,9 @@ function diffStores(before, after, changedStores) {
 }
 
 export async function recordOperation(root, input, options = {}) {
+  if (!options.lockHeld && !options.deferCommit) {
+    return withWorkspaceLock(root, () => recordOperation(root, input, { ...options, lockHeld: true }));
+  }
   const envelope = clone(input);
   if (!envelope.operation_id && envelope.type && envelope.payload) envelope.operation_id = makeOperationId(envelope.type, envelope.payload);
   const envelopeIssues = [...validateOperationEnvelope(envelope), ...validateOperationContract(envelope)];
@@ -110,8 +114,8 @@ export async function recordOperation(root, input, options = {}) {
   const extraEntries = [];
   const resultIds = [];
   let result = {};
-  // dry-run 需要与写入完全同源的前置快照：同一份数据、同一条校验路径，只是不提交。
-  const beforeState = options.dryRun ? clone(data) : null;
+  // 补偿快照和 dry-run 使用同一份前置状态，避免两套差异逻辑漂移。
+  const beforeState = clone(data);
 
   if (envelope.type === "workflow.apply") {
     const workflow = await applyWorkflow(envelope, (child) => recordOperation(root, child, { ...options, data, deferCommit: true }));
@@ -171,7 +175,7 @@ export async function recordOperation(root, input, options = {}) {
     const statusChangedWithAuthority = Boolean(existing && payload.status && payload.status !== existing.status && requestedScopes.length);
     if (scopesChanged && (existing || requestedScopes.length) || statusChangedWithAuthority) assertUserConfirmation(envelope.approval, "stakeholder approval authority");
     const record = {
-      id: payload.id || nextId(data.stakeholders.stakeholders, "stakeholder"),
+      id: nextWorkspaceId(data, data.stakeholders.stakeholders, "stakeholder", payload.id),
       name: payload.name ?? existing?.name,
       role: payload.role ?? existing?.role,
       organization: payload.organization ?? existing?.organization ?? null,
@@ -202,14 +206,14 @@ export async function recordOperation(root, input, options = {}) {
       resultIds.push(duplicate.id);
       result = { duplicate_of: duplicate.id, source: duplicate, inbox_items_added: 0 };
     } else {
-    const id = payload.id || nextId(data.sources.sources, "source");
+    const id = nextWorkspaceId(data, data.sources.sources, "source", payload.id);
     let archivedPath = payload.archived_path || null;
     if (rawContent) {
       const year = String(payload.source_time || now).slice(0, 4);
       const filename = path.basename(payload.raw_path).replace(/[^A-Za-z0-9._-]+/g, "-") || "source";
       archivedPath = `archive/files/${year}/${id}-${filename}`;
       extraEntries.push({ path: archivedPath, content: rawContent });
-      const archiveRecord = { id: nextId(data.archive.files, "archive"), logical_id: id, source_id: id, deliverable_id: null, path: archivedPath, original_name: path.basename(payload.raw_path), type: payload.type, sha256: hash, archived_at: payload.captured_at || now, reason: payload.archive_reason || "source_evidence", superseded_by: null, availability: "local" };
+      const archiveRecord = { id: nextWorkspaceId(data, data.archive.files, "archive"), logical_id: id, source_id: id, deliverable_id: null, path: archivedPath, original_name: path.basename(payload.raw_path), type: payload.type, sha256: hash, archived_at: payload.captured_at || now, reason: payload.archive_reason || "source_evidence", superseded_by: null, availability: "local" };
       validateOrThrow("archive", archiveRecord);
       data.archive.files.push(archiveRecord);
       changedStores.add("archive");
@@ -219,7 +223,7 @@ export async function recordOperation(root, input, options = {}) {
     validateOrThrow("source", source);
     data.sources.sources.push(source);
     for (const candidate of payload.items || []) {
-      const item = { id: candidate.id || nextId(data.inbox.items, "inbox"), source_id: id, classification: candidate.classification, summary: candidate.summary, quote: candidate.quote ?? null, confidence: candidate.confidence ?? null, authority: candidate.authority || "unknown", related_ids: normalizeArray(candidate.related_ids), proposed_action: candidate.proposed_action ?? null, status: candidate.status || "new", created_at: source.captured_at, applied_to_ids: normalizeArray(candidate.applied_to_ids), applied_at: candidate.applied_at ?? null, disposition_reason: candidate.disposition_reason ?? null };
+      const item = { id: nextWorkspaceId(data, data.inbox.items, "inbox", candidate.id), source_id: id, classification: candidate.classification, summary: candidate.summary, quote: candidate.quote ?? null, confidence: candidate.confidence ?? null, authority: candidate.authority || "unknown", related_ids: normalizeArray(candidate.related_ids), proposed_action: candidate.proposed_action ?? null, status: candidate.status || "new", created_at: source.captured_at, applied_to_ids: normalizeArray(candidate.applied_to_ids), applied_at: candidate.applied_at ?? null, disposition_reason: candidate.disposition_reason ?? null };
       validateOrThrow("inbox", item);
       data.inbox.items.push(item);
       resultIds.push(item.id);
@@ -231,7 +235,7 @@ export async function recordOperation(root, input, options = {}) {
     }
   } else if (envelope.type === "activity.record") {
     const payload = envelope.payload;
-    const record = { id: payload.id || nextId(data.activity.entries, "activity"), occurred_at: payload.occurred_at || payload.timestamp || now, action: payload.action, outcome: payload.outcome, related_ids: normalizeArray(payload.related_ids), source_ids: normalizeArray(payload.source_ids || envelope.source_ids), evidence: payload.evidence ?? null, next_action: payload.next_action ?? null, recorded_at: payload.recorded_at || now };
+    const record = { id: nextWorkspaceId(data, data.activity.entries, "activity", payload.id), occurred_at: payload.occurred_at || payload.timestamp || now, action: payload.action, outcome: payload.outcome, related_ids: normalizeArray(payload.related_ids), source_ids: normalizeArray(payload.source_ids || envelope.source_ids), evidence: payload.evidence ?? null, next_action: payload.next_action ?? null, recorded_at: payload.recorded_at || now };
     validateOrThrow("activity", record);
     data.activity.entries.push(record);
     changedStores.add("activity");
@@ -251,7 +255,7 @@ export async function recordOperation(root, input, options = {}) {
       const payload = input.record;
       const existing = payload.id ? records.find((item) => item.id === payload.id) : null;
       const record = defaultScheduleRecord({ ...existing, ...payload, source_ids: payload.source_ids ?? existing?.source_ids ?? envelope.source_ids }, kind, now);
-      record.id ||= nextId(records, kind);
+      record.id = nextWorkspaceId(data, records, kind, record.id);
       delete record._kind;
       if (seenIds.has(record.id)) throw new Error(JSON.stringify({ code: "duplicate_schedule_target", id: record.id, fix: "Each record ID may appear only once in schedule.batch-upsert" }));
       seenIds.add(record.id);
@@ -310,7 +314,7 @@ export async function recordOperation(root, input, options = {}) {
     const payload = envelope.payload;
     const existing = payload.id ? data.requirements.requirements.find((item) => item.id === payload.id) : null;
     const merged = { ...existing, ...payload };
-    const record = { id: payload.id || nextId(data.requirements.requirements, "requirement"), title: merged.title, description: merged.description, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
+    const record = { id: nextWorkspaceId(data, data.requirements.requirements, "requirement", payload.id), title: merged.title, description: merged.description, status: merged.status || "candidate", acceptance_criteria: normalizeArray(merged.acceptance_criteria), source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), supersedes_id: merged.supersedes_id ?? null, superseded_by_id: merged.superseded_by_id ?? null, approved_by_id: merged.approved_by_id ?? null, approved_at: merged.approved_at ?? null, updated_at: payload.updated_at || now };
     if (existing) assertTransition("requirement", existing.status, record.status, record.id);
     const existingApproved = existing && ["approved", "implemented", "validated"].includes(existing.status);
     const approvedContentChanged = existingApproved && digestFields(existing, REQUIREMENT_IMMUTABLE_FIELDS) !== digestFields(record, REQUIREMENT_IMMUTABLE_FIELDS);
@@ -346,7 +350,7 @@ export async function recordOperation(root, input, options = {}) {
     if (!kind) throw new Error("register.upsert collection must be risks, issues, or decisions");
     const payload = envelope.payload.record || Object.fromEntries(Object.entries(envelope.payload).filter(([key]) => key !== "collection"));
     const existing = payload.id ? data.registers[collection].find((item) => item.id === payload.id) : null;
-    const record = { ...existing, ...payload, id: payload.id || nextId(data.registers[collection], kind), status: payload.status || existing?.status || (kind === "decision" ? "proposed" : "open"), source_ids: normalizeArray(payload.source_ids || envelope.source_ids), owner: kind === "decision" ? undefined : payload.owner ?? existing?.owner ?? null, updated_at: payload.updated_at || now };
+    const record = { ...existing, ...payload, id: nextWorkspaceId(data, data.registers[collection], kind, payload.id), status: payload.status || existing?.status || (kind === "decision" ? "proposed" : "open"), source_ids: normalizeArray(payload.source_ids || envelope.source_ids), owner: kind === "decision" ? undefined : payload.owner ?? existing?.owner ?? null, updated_at: payload.updated_at || now };
     if (kind === "decision" && existing) assertTransition("decision", existing.status, record.status, record.id);
     const approvedDecisionChanged = kind === "decision" && existing?.status === "approved" && digestFields(existing, DECISION_CONTROLLED_FIELDS) !== digestFields(record, DECISION_CONTROLLED_FIELDS);
     if (approvedDecisionChanged || kind === "decision" && existing?.status === "approved" && record.status === "superseded") {
@@ -374,7 +378,7 @@ export async function recordOperation(root, input, options = {}) {
     const changeItems = Array.isArray(payload.change_items) ? payload.change_items : [];
     if (!targetIds.length || targetIds.length !== changeItems.length || targetIds.some((id) => !changeItems.some((item) => item.target_id === id))) throw new Error(JSON.stringify({ code: "change_request_items_mismatch", fix: "Provide one exact before/after change_item for every target_id" }));
     if (changeItems.some((item) => digestValue(item.before) === digestValue(item.after))) throw new Error(JSON.stringify({ code: "change_request_no_effect", fix: "change_items 的 before 与 after 完全相同；变更请求必须描述真实改动" }));
-    const record = { id: payload.id || nextId(data.requirements.change_requests, "change_request"), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: normalizeArray(payload.source_ids || envelope.source_ids), created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
+    const record = { id: nextWorkspaceId(data, data.requirements.change_requests, "change_request", payload.id), title: payload.title, status: "proposed", approval_scope: payload.approval_scope, target_ids: targetIds, change_items: changeItems, before: payload.before, after: payload.after, reason: payload.reason, impact: payload.impact, source_ids: normalizeArray(payload.source_ids || envelope.source_ids), created_at: payload.created_at || now, approved_by_id: null, confirmed_by_user_at: null, effective_at: null, approved_change_digest: null, applied_target_ids: [], applied_operation_ids: [], applied_at: null };
     validateOrThrow("change_request", record);
     data.requirements.change_requests.push(record);
     changedStores.add("requirements");
@@ -394,15 +398,26 @@ export async function recordOperation(root, input, options = {}) {
     changedStores.add("changes");
     resultIds.push(record.id);
     result = { change_request: record };
+  } else if (envelope.type === "operation.compensate") {
+    if (!options.dryRun) assertUserConfirmation(envelope.approval, "operation compensation");
+    const applied = await applyCompensation(root, data, envelope.payload.operation_id);
+    for (const store of applied.changedStores) changedStores.add(store);
+    extraEntries.push(...applied.entries);
+    resultIds.push(...(applied.target.target_ids || []));
+    result = applied.result;
+    if (!options.dryRun) result.compensation.confirmed_by_user_at = envelope.approval.confirmed_by_user_at;
   } else {
     result = await applyContentOperation({ root, envelope, data, now, changedStores, extraEntries, resultIds });
   }
 
-  data.changes.operations ||= [];
-  data.changes.operations.push({ operation_id: envelope.operation_id, request_hash: requestHash, type: envelope.type, target_ids: [...new Set(resultIds)], recorded_at: now, result: clone(result) });
-  changedStores.add("changes");
   const response = { ok: true, idempotent: false, operation_id: envelope.operation_id, target_ids: [...new Set(resultIds)], ...result };
   if (options.deferCommit) return { ...response, transaction: { changed_stores: [...changedStores], entries: extraEntries } };
+  const compensation = envelope.type === "operation.compensate"
+    ? { version: 2, reversible: false, records: [], metadata: [], documents: [], retained_paths: [], blocked_paths: [] }
+    : await captureCompensation(root, beforeState, data, changedStores, extraEntries, result);
+  data.changes.operations ||= [];
+  data.changes.operations.push({ operation_id: envelope.operation_id, request_hash: requestHash, type: envelope.type, target_ids: [...new Set(resultIds)], recorded_at: now, result: clone(result), compensation });
+  changedStores.add("changes");
   const pendingPaths = extraEntries.filter((item) => !item.delete).map((item) => item.path);
   const validation = await collectIssues(root, data, { checkFiles: false, checkGenerated: false, pendingPaths });
   const errors = validation.filter((item) => item.level === "error");
@@ -427,6 +442,9 @@ export async function recordOperation(root, input, options = {}) {
   const entries = [...changedStores].map((key) => jsonEntry(STORE_FILES[key], data[key]));
   entries.push(...extraEntries);
   entries.push(...await generatedEntries(root, data));
-  await commitTransaction(root, envelope.operation_id, entries, options);
+  await commitTransaction(root, envelope.operation_id, entries, {
+    failAfter: options.failAfter,
+    lockHeld: true,
+  });
   return response;
 }

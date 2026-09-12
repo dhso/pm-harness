@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   buildDailyBrief,
+  compensateLastOperation,
   describeOperationContract,
   lintWorkspace,
   maintainWorkspace,
@@ -101,6 +102,7 @@ test("base template rebuilds, passes lint, uses LF, and has real Skills", async 
   await rebuildWorkspace(root);
   const result = await lintWorkspace(root);
   assert.equal(result.ok, true, JSON.stringify(result.issues, null, 2));
+  assert.deepEqual(result.issues, []);
   assert.deepEqual(result.counts, { error: 0, warning: 0, info: 0 });
   assert.equal((await lstat(path.join(root, ".agents/skills"))).isSymbolicLink(), false);
   assert.equal((await readJson(root, "activity/log.json")).schema_version, SCHEMA_VERSION);
@@ -140,6 +142,9 @@ test("Gantt keeps baseline, forecast, actual, and visible variance separate", ()
   assert.match(output, /延期 2 天/);
   assert.match(output, /2026-09-01 → 2026-09-05/);
   assert.match(output, /active, task_001/);
+  assert.match(output, /进行中/);
+  const escaped = renderGantt({ name: "Launch" }, { milestones: [], tasks: [{ id: "TASK-002", title: "Prepare [A]: review", status: "not_started", baseline_start: "2026-09-01", baseline_end: "2026-09-02", next_action: null }] });
+  assert.ok(!escaped.includes("Prepare [A]: review :"));
 });
 
 test("invalid status, date, and field type are rejected before write", async () => {
@@ -448,23 +453,6 @@ test("maintain stops before rule changes when the workspace has errors", async (
   assert.equal(result.ok, false);
   assert.equal(result.stopped_before_changes, true);
   assert.equal((await readJson(root, "governance/proposals.json")).proposals.length, 0);
-});
-
-test("Git keeps the necessary set, excludes raw archives, and flags forced archives or credentials", async () => {
-  const root = await workspace();
-  execFileSync("git", ["init", "-q"], { cwd: root });
-  execFileSync("git", ["add", "."], { cwd: root });
-  const modes = execFileSync("git", ["ls-files", "-s"], { cwd: root, encoding: "utf8" });
-  assert.ok(!modes.split("\n").some((line) => line.startsWith("120000 ")));
-  await mkdir(path.join(root, "archive/files/2026"), { recursive: true });
-  await writeFile(path.join(root, "archive/files/2026/mail.png"), "raw", "utf8");
-  assert.match(execFileSync("git", ["check-ignore", "archive/files/2026/mail.png"], { cwd: root, encoding: "utf8" }), /mail\.png/);
-  await writeFile(path.join(root, ".env"), "TOKEN=secret", "utf8");
-  execFileSync("git", ["add", "-f", "archive/files/2026/mail.png", ".env"], { cwd: root });
-  const lint = await lintWorkspace(root);
-  const codes = lint.issues.map((item) => item.code);
-  assert.ok(codes.includes("archive_tracked"));
-  assert.ok(codes.includes("secret_file_tracked"));
 });
 
 test("agent-only CLI exposes record, contract discovery, brief, maintain, and structured errors", async () => {
@@ -874,6 +862,50 @@ test("record --help explains usage instead of failing with input_required", asyn
   // 真正缺少输入时仍须以非零退出码报错，--help 不能把失败路径也变成成功。
   const failure = await rejection(Promise.resolve().then(() => execFileSync(process.execPath, [path.join(root, ".harness/scripts/harness.mjs"), "record", "--data", "{}"], { cwd: root, encoding: "utf8" })));
   assert.equal(JSON.parse(failure.stdout).ok, false);
+});
+
+test("status and current memory updates are transactional and bounded", async () => {
+  const root = await workspace();
+  await initialize(root, "Summary sync");
+  const status = await recordOperation(root, operation("status.update", {
+    content: "# 项目状态：Summary sync\n\n## 当前重点\n\n完成摘要同步。\n\n## 阻塞与风险\n\n无。\n\n## 下一步\n\n继续推进。\n",
+  }));
+  assert.equal(status.document.path, "project/status.md");
+  assert.match(await readFile(path.join(root, "project/status.md"), "utf8"), /完成摘要同步/);
+  await compensateLastOperation(root, status.operation_id, { confirmedByUserAt: new Date().toISOString() });
+  assert.doesNotMatch(await readFile(path.join(root, "project/status.md"), "utf8"), /完成摘要同步/);
+
+  const memory = await recordOperation(root, operation("memory.current.update", {
+    content: "# 当前工作记忆\n\n- 当前重点：摘要同步\n- 待确认：无\n- 下一步：继续推进\n- 最近更新：2026-09-12T00:00:00.000Z\n",
+  }));
+  assert.equal(memory.document.path, "memory/current.md");
+  assert.match(await readFile(path.join(root, "memory/current.md"), "utf8"), /摘要同步/);
+
+  const config = await readJson(root, ".harness/config.json");
+  config.memory_current_max_bytes = 32;
+  await writeJsonFixture(root, ".harness/config.json", config);
+  await assert.rejects(recordOperation(root, operation("memory.current.update", {
+    content: "# 当前工作记忆\n\n- 当前重点：这段内容超过配置上限\n- 待确认：无\n- 下一步：无\n",
+  })), /memory_current_too_large/);
+});
+
+test("readJson reports an actionable structured error for malformed stores", async () => {
+  const root = await workspace();
+  await writeFile(path.join(root, "project/project.json"), "not-json\n", "utf8");
+  const error = await rejection(readJson(root, "project/project.json"));
+  const details = JSON.parse(error.message);
+  assert.equal(details.code, "invalid_json");
+  assert.equal(details.path, "project/project.json");
+  assert.ok(details.fix);
+});
+
+test("lint warns before a structured store grows too large", async () => {
+  const root = await workspace();
+  const config = await readJson(root, ".harness/config.json");
+  config.large_tracked_file_mb = 0.0001;
+  await writeJsonFixture(root, ".harness/config.json", config);
+  const lint = await lintWorkspace(root, { fast: true });
+  assert.ok(lint.issues.some((item) => item.code === "store_size_large"));
 });
 
 test("approval guardrails return an actionable fix, not just an error code", async () => {

@@ -48,7 +48,33 @@ export const DELIVERABLE_CONTROLLED_FIELDS = Object.freeze([...DELIVERABLE_IMMUT
 export const DECISION_CONTROLLED_FIELDS = Object.freeze(["title", "description", "rationale", "source_ids", "superseded_by_id"]);
 
 export async function readJson(root, relativePath) {
-  return JSON.parse(await readFile(path.join(root, relativePath), "utf8"));
+  let raw;
+  try {
+    raw = await readFile(path.join(root, relativePath), "utf8");
+  } catch (error) {
+    const wrapped = new Error(JSON.stringify({
+      code: error.code === "ENOENT" ? "store_missing" : "store_read_failed",
+      path: relativePath,
+      message: error.message,
+      fix: error.code === "ENOENT" ? `Restore ${relativePath} from the workspace template or backup` : "Check file permissions and retry once",
+    }));
+    wrapped.code = error.code === "ENOENT" ? "store_missing" : "store_read_failed";
+    wrapped.path = relativePath;
+    throw wrapped;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const wrapped = new Error(JSON.stringify({
+      code: "invalid_json",
+      path: relativePath,
+      message: error.message,
+      fix: "Restore valid JSON for this store; do not retry unchanged input",
+    }));
+    wrapped.code = "invalid_json";
+    wrapped.path = relativePath;
+    throw wrapped;
+  }
 }
 
 export async function readWorkspace(root) {
@@ -60,7 +86,7 @@ export async function readOptionalJson(root, relativePath, fallback) {
   try {
     return await readJson(root, relativePath);
   } catch (error) {
-    if (error.code === "ENOENT") return structuredClone(fallback);
+    if (error.code === "store_missing") return structuredClone(fallback);
     throw error;
   }
 }

@@ -27,6 +27,20 @@ export async function initializeProject(root, input) {
   return result.project;
 }
 
+export async function compensateLastOperation(root, operationId, options = {}) {
+  const payload = { operation_id: operationId };
+  return recordOperation(root, {
+    schema_version: SCHEMA_VERSION,
+    operation_id: makeOperationId("operation.compensate", payload),
+    type: "operation.compensate",
+    actor: { kind: "agent" },
+    reason: "撤销最近一次可撤销操作并保留审计记录",
+    source_ids: [],
+    ...(options.confirmedByUserAt ? { approval: { confirmed_by_user_at: options.confirmedByUserAt } } : {}),
+    payload,
+  }, options);
+}
+
 export async function sha256File(filePath) {
   return sha256Path(filePath);
 }

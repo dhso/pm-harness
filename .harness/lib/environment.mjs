@@ -1,6 +1,5 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync, lstatSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { ageInDays } from "./helpers.mjs";
 
@@ -21,15 +20,6 @@ function skillFrontmatter(content) {
     owner: block.match(/^\s+owner:\s*(\S+)$/m)?.[1] || null,
     composes,
   };
-}
-
-function gitTrackedFiles(root) {
-  try {
-    if (execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() !== "true") return null;
-    return execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0").filter(Boolean);
-  } catch {
-    return null;
-  }
 }
 
 async function harnessModules(root) {
@@ -92,16 +82,12 @@ export async function addEnvironmentIssues(root, data, issues) {
     addIssue(issues, "error", "current_memory_missing", "memory/current.md", "Current memory file is missing");
   }
 
-  const tracked = gitTrackedFiles(root);
-  if (!tracked) return;
-  for (const file of tracked) {
-    if ((data.config.archive_roots || []).some((prefix) => file === prefix || file.startsWith(`${prefix}/`)) && !file.endsWith(".gitkeep")) addIssue(issues, "error", "archive_tracked", file, "Archived or generated material must not be tracked by Git");
-    const base = path.basename(file);
-    if (base === ".env" || base.startsWith(".env.") && base !== ".env.example" || /\.(pem|key)$/i.test(base)) addIssue(issues, "error", "secret_file_tracked", file, "Potential credential file is tracked by Git");
-    try {
-      const info = await stat(path.join(root, file));
-      if (info.isSymbolicLink()) addIssue(issues, "error", "symlink_tracked", file, "Cross-platform template must not track symlinks");
-      if (info.isFile() && info.size > Number(data.config.large_tracked_file_mb || 25) * 1024 * 1024) addIssue(issues, "warning", "large_tracked_file", file, `Tracked file exceeds ${data.config.large_tracked_file_mb || 25} MB`);
-    } catch {}
+  const statusPath = path.join(root, "project", "status.md");
+  try {
+    const status = await readFile(statusPath, "utf8");
+    if (Buffer.byteLength(status) > Number(data.config.status_max_bytes || 8192)) addIssue(issues, "warning", "project_status_too_large", "project/status.md", "Project status exceeds the configured summary budget");
+  } catch {
+    addIssue(issues, "error", "project_status_missing", "project/status.md", "Project status file is missing");
   }
+
 }

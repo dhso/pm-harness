@@ -64,6 +64,26 @@
 
 允许转换：`uninitialized` → `active`；`active` → `on_hold` | `completed` | `cancelled`；`on_hold` → `active` | `cancelled`
 
+### `status.update`
+
+以事务方式更新项目状态摘要；不改变结构化事实。
+
+必填：`content`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `content` | `string` | 是 |
+
+### `memory.current.update`
+
+以事务方式更新短期工作记忆；内容受配置大小上限约束。
+
+必填：`content`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `content` | `string` | 是 |
+
 ### `stakeholder.upsert`
 
 新建记录时另需：`name`、`role`
@@ -517,6 +537,16 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 | `id` | `string` | 是 |
 
 `rule` 状态取值：`active`、`retired`
+
+### `operation.compensate`
+
+实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和人工维护的文档不可直接补偿，状态与当前记忆摘要可以事务撤销。
+
+必填：`operation_id`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `operation_id` | `string` | 是 |
 
 ### `workflow.apply`
 

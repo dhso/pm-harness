@@ -1,5 +1,5 @@
-import { digestValue, isPlainObject, isTimestamp, nextId } from "./model.mjs";
-import { normalizeArray, validateOrThrow } from "./helpers.mjs";
+import { digestValue, isPlainObject, isTimestamp } from "./model.mjs";
+import { nextWorkspaceId, normalizeArray, validateOrThrow } from "./helpers.mjs";
 
 function verifyExactChange(changeRequest, actualChanges) {
   if (!Array.isArray(changeRequest.change_items) || !changeRequest.change_items.length) {
@@ -41,7 +41,7 @@ export function addControlledChange(data, envelope, details) {
   if (changeRequestId && linkedRequest?.status !== "approved") throw new Error(JSON.stringify({ code: "approved_change_request_required", id: changeRequestId, fix: "引用的变更请求必须存在且已批准" }));
   if (envelope.approval?.change_request_id && linkedRequest?.status !== "approved") throw new Error(JSON.stringify({ code: "approved_change_request_required", change_request_id: envelope.approval.change_request_id, fix: "Only an approved change request may be linked to an applied controlled change" }));
   const record = {
-    id: nextId(data.changes.changes, "change"),
+    id: nextWorkspaceId(data, data.changes.changes, "change"),
     operation_id: envelope.operation_id,
     kind: details.kind,
     target_ids: details.target_ids,

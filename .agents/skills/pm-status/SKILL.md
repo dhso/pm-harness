@@ -18,4 +18,4 @@ metadata:
 
 编写状态报告时，先在此处建立事实状态，再使用 `pm-communication` 和 `templates/status-report.md` 生成可发送的文字。开头应说明结果、偏差、风险、待决定事项和下一周期。避免只列活动而不说明影响。
 
-通过仅供 Agent 使用的记录契约写入精简的 `ACT-###`；`activity/log.json` 是事实源，带日期的 Markdown 按项目时区生成。然后刷新当前状态、记忆、甘特视图和索引。
+通过仅供 Agent 使用的记录契约写入精简的 `ACT-###`；`activity/log.json` 是事实源，带日期的 Markdown 按项目时区生成。需要刷新人读状态与短期记忆时，把 `status.update`、`memory.current.update` 与相关事实纳入同一次 `workflow.apply`，再重建甘特视图和索引。

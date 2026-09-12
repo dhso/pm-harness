@@ -1,15 +1,18 @@
-import { addDays, localDate, validateOrThrow } from "./helpers.mjs";
-import { digestValue, nextId } from "./model.mjs";
+import { addDays, clone, localDate, nextWorkspaceId, validateOrThrow } from "./helpers.mjs";
+import { digestValue } from "./model.mjs";
 import { STORE_FILES, readWorkspace } from "./workspace.mjs";
 import { lintWorkspace } from "./lint.mjs";
 import { generatedEntries, rebuildWorkspace } from "./views.mjs";
-import { commitTransaction, jsonEntry } from "./transaction.mjs";
+import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.mjs";
+import { captureCompensation } from "./compensation.mjs";
 
-export async function maintainWorkspace(root) {
-  await rebuildWorkspace(root);
+export async function maintainWorkspace(root, options = {}) {
+  if (!options.lockHeld) return withWorkspaceLock(root, () => maintainWorkspace(root, { ...options, lockHeld: true }));
+  await rebuildWorkspace(root, { lockHeld: true });
   const initialLint = await lintWorkspace(root);
   if (!initialLint.ok) return { ok: false, proposals_created: [], observations_linked: [], rule_reviews_due: [], stopped_before_changes: true, lint: initialLint };
   const data = await readWorkspace(root);
+  const beforeState = clone(data);
   const threshold = Number(data.config.repeat_observation_threshold || 2);
   const today = localDate(data.project.timezone || data.config.default_timezone || "UTC");
   const groups = new Map();
@@ -32,7 +35,7 @@ export async function maintainWorkspace(root) {
       continue;
     }
     const proposal = {
-      id: nextId(data.proposals.proposals, "proposal"),
+      id: nextWorkspaceId(data, data.proposals.proposals, "proposal"),
       title: `减少重复问题：${items.at(-1).title}`,
       status: "proposed",
       observation_ids: items.map((item) => item.id),
@@ -49,15 +52,21 @@ export async function maintainWorkspace(root) {
     };
     validateOrThrow("proposal", proposal);
     data.proposals.proposals.push(proposal);
-    for (const item of items) item.proposal_id = proposal.id;
+    for (const item of items) {
+      item.proposal_id = proposal.id;
+      linked.push(item.id);
+    }
     created.push(proposal.id);
   }
   if (created.length || linked.length) {
     const operationId = `OP-maintain-${digestValue([...created, ...linked]).slice(0, 12)}`;
+    const result = { proposals_created: created, observations_linked: linked };
+    const changedStores = new Set(["proposals", "observations"]);
+    const compensation = await captureCompensation(root, beforeState, data, changedStores, [], result);
     data.changes.operations ||= [];
-    data.changes.operations.push({ operation_id: operationId, type: "maintain.rule-proposals", target_ids: [...created, ...linked], recorded_at: new Date().toISOString(), result: { proposals_created: created, observations_linked: linked } });
+    data.changes.operations.push({ operation_id: operationId, type: "maintain.rule-proposals", target_ids: [...new Set([...created, ...linked])], recorded_at: new Date().toISOString(), result, compensation });
     const entries = [jsonEntry(STORE_FILES.proposals, data.proposals), jsonEntry(STORE_FILES.observations, data.observations), jsonEntry(STORE_FILES.changes, data.changes), ...await generatedEntries(root, data)];
-    await commitTransaction(root, operationId, entries);
+    await commitTransaction(root, operationId, entries, { lockHeld: true });
   }
   const lint = await lintWorkspace(root);
   const refreshed = await readWorkspace(root);

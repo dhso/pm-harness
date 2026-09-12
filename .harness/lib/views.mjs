@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { daysBetween, escapeTable, localDate, mermaidText, text } from "./helpers.mjs";
 import { readWorkspace } from "./workspace.mjs";
-import { commitTransaction } from "./transaction.mjs";
+import { commitTransaction, withWorkspaceLock } from "./transaction.mjs";
 
 function taskVisualStatus(task) {
   if (task.status === "done") return "done";
@@ -11,6 +11,14 @@ function taskVisualStatus(task) {
   if (task.status === "blocked") return "crit";
   return "";
 }
+
+const STATUS_LABELS = Object.freeze({
+  not_started: "未开始",
+  in_progress: "进行中",
+  blocked: "阻塞",
+  done: "完成",
+  cancelled: "取消",
+});
 
 export function renderGantt(project, schedule) {
   const lines = [
@@ -51,7 +59,7 @@ export function renderGantt(project, schedule) {
     const actual = item.actual_start || item.actual_end ? `${text(item.actual_start)} → ${text(item.actual_end)}` : "—";
     const slip = daysBetween(item.baseline_end, item.forecast_end);
     const variance = slip === null ? "—" : slip > 0 ? `延期 ${slip} 天` : slip < 0 ? `提前 ${Math.abs(slip)} 天` : "无偏差";
-    lines.push(`| ${escapeTable(item.id)} | ${escapeTable(item.title)} | ${escapeTable(item.status)} | ${escapeTable(baseline)} | ${escapeTable(forecast)} | ${escapeTable(actual)} | ${escapeTable(variance)} | ${escapeTable(item.next_action)} |`);
+    lines.push(`| ${escapeTable(item.id)} | ${escapeTable(item.title)} | ${escapeTable(STATUS_LABELS[item.status] || item.status)} | ${escapeTable(baseline)} | ${escapeTable(forecast)} | ${escapeTable(actual)} | ${escapeTable(variance)} | ${escapeTable(item.next_action)} |`);
   }
   if (!milestones.length && !tasks.length) lines.push("| — | 尚无计划 | — | — | — | — | — | — |");
   lines.push("");
@@ -137,9 +145,11 @@ export async function generatedEntries(root, data, { pruneActivity = true } = {}
   return entries;
 }
 
-export async function rebuildWorkspace(root) {
+export async function rebuildWorkspace(root, options = {}) {
+  if (!options.lockHeld) return withWorkspaceLock(root, () => rebuildWorkspace(root, { ...options, lockHeld: true }));
   const data = await readWorkspace(root);
   const entries = await generatedEntries(root, data);
-  const result = await commitTransaction(root, `OP-rebuild-${Date.now()}`, entries);
+  const operationId = `OP-rebuild-${Date.now()}`;
+  const result = await commitTransaction(root, operationId, entries, { lockHeld: true });
   return { updated: result.committed };
 }

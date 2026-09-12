@@ -63,6 +63,8 @@ export const ARCHIVE_AVAILABILITY = Object.freeze(["local", "missing", "external
 export const OPERATION_TYPES = Object.freeze([
   "project.initialize",
   "project.update",
+  "status.update",
+  "memory.current.update",
   "stakeholder.upsert",
   "source.register",
   "activity.record",
@@ -81,6 +83,7 @@ export const OPERATION_TYPES = Object.freeze([
   "rule.propose",
   "rule.activate",
   "rule.retire",
+  "operation.compensate",
   "workflow.apply",
 ]);
 

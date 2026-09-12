@@ -1,11 +1,25 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { assertTransition, nextId } from "./model.mjs";
-import { clone, digestFields, exactChange, isWorkspaceRelativePath, normalizeArray, replacementChange, safeWikiPath, sha256Path, upsert, validateOrThrow } from "./helpers.mjs";
+import { assertTransition } from "./model.mjs";
+import { clone, digestFields, exactChange, isWorkspaceRelativePath, nextWorkspaceId, normalizeArray, replacementChange, safeWikiPath, sha256Path, upsert, validateOrThrow } from "./helpers.mjs";
 import { DELIVERABLE_CONTROLLED_FIELDS, DELIVERABLE_IMMUTABLE_FIELDS } from "./workspace.mjs";
 import { addControlledChange, assertUserConfirmation, verifyApproval } from "./approval.mjs";
 
 export async function applyContentOperation({ root, envelope, data, now, changedStores, extraEntries, resultIds }) {
+  if (["status.update", "memory.current.update"].includes(envelope.type)) {
+    const isMemory = envelope.type === "memory.current.update";
+    const relativePath = isMemory ? "memory/current.md" : "project/status.md";
+    const content = envelope.payload.content.endsWith("\n") ? envelope.payload.content : `${envelope.payload.content}\n`;
+    if (!content.trim()) throw new Error(JSON.stringify({ code: "empty_document", path: relativePath, fix: "Provide a non-empty document body" }));
+    const maxBytes = Number(isMemory ? data.config.memory_current_max_bytes || 4096 : data.config.status_max_bytes || 8192);
+    if (Buffer.byteLength(content) > maxBytes) throw new Error(JSON.stringify({ code: isMemory ? "memory_current_too_large" : "project_status_too_large", path: relativePath, max_bytes: maxBytes, fix: "Keep the summary short; move durable detail to structured facts or Wiki" }));
+    if (isMemory) {
+      for (const label of ["当前重点", "待确认", "下一步"]) if (!content.includes(label)) throw new Error(JSON.stringify({ code: "memory_current_section_missing", path: relativePath, section: label, fix: `Include the ${label} section` }));
+    }
+    extraEntries.push({ path: relativePath, content });
+    resultIds.push(relativePath);
+    return { document: { path: relativePath, bytes: Buffer.byteLength(content), updated_at: now } };
+  }
   if (envelope.type === "inbox.transition") {
     const item = data.inbox.items.find((candidate) => candidate.id === envelope.payload.id);
     if (!item) throw new Error(`Inbox item not found: ${envelope.payload.id}`);
@@ -20,7 +34,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     const payload = envelope.payload;
     const existing = payload.id ? data.deliverables.deliverables.find((item) => item.id === payload.id) : null;
     if (envelope.type === "deliverable.transition" && !existing) throw new Error(`Deliverable not found: ${payload.id}`);
-    const record = envelope.type === "deliverable.transition" ? { ...existing, ...payload } : { ...existing, ...payload, id: payload.id || nextId(data.deliverables.deliverables, "deliverable"), status: payload.status || existing?.status || "requested" };
+    const record = envelope.type === "deliverable.transition" ? { ...existing, ...payload } : { ...existing, ...payload, id: nextWorkspaceId(data, data.deliverables.deliverables, "deliverable", payload.id), status: payload.status || existing?.status || "requested" };
     for (const field of ["requirement_ids", "source_ids", "acceptance_criteria", "reviewers"]) record[field] = normalizeArray(record[field] || (field === "source_ids" ? envelope.source_ids : []));
     for (const field of ["path", "content_sha256", "due_at", "completed_at", "approved_by_id", "approved_at", "delivered_at", "accepted_by_id", "accepted_at", "acceptance_evidence", "supersedes_id", "superseded_by_id"]) if (!(field in record)) record[field] = null;
     if (existing) assertTransition("deliverable", existing.status, record.status, record.id);
@@ -70,7 +84,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
   if (envelope.type === "wiki.register") {
     const payload = envelope.payload;
     const existing = payload.id ? data.catalog.pages.find((item) => item.id === payload.id) : null;
-    const record = { ...existing, id: payload.id || nextId(data.catalog.pages, "wiki"), title: payload.title ?? existing?.title, path: safeWikiPath(payload.path ?? existing?.path), status: payload.status || existing?.status || "active", source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), related_ids: normalizeArray(payload.related_ids ?? existing?.related_ids), owner: payload.owner ?? existing?.owner ?? null, last_reviewed_at: payload.last_reviewed_at ?? existing?.last_reviewed_at ?? now, review_due_at: payload.review_due_at ?? existing?.review_due_at ?? null, supersedes_id: payload.supersedes_id ?? existing?.supersedes_id ?? null, superseded_by_id: payload.superseded_by_id ?? existing?.superseded_by_id ?? null };
+    const record = { ...existing, id: nextWorkspaceId(data, data.catalog.pages, "wiki", payload.id), title: payload.title ?? existing?.title, path: safeWikiPath(payload.path ?? existing?.path), status: payload.status || existing?.status || "active", source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), related_ids: normalizeArray(payload.related_ids ?? existing?.related_ids), owner: payload.owner ?? existing?.owner ?? null, last_reviewed_at: payload.last_reviewed_at ?? existing?.last_reviewed_at ?? now, review_due_at: payload.review_due_at ?? existing?.review_due_at ?? null, supersedes_id: payload.supersedes_id ?? existing?.supersedes_id ?? null, superseded_by_id: payload.superseded_by_id ?? existing?.superseded_by_id ?? null };
     if (existing) assertTransition("wiki", existing.status, record.status, record.id);
     validateOrThrow("wiki", record);
     upsert(data.catalog.pages, record);
@@ -82,7 +96,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
   }
   if (envelope.type === "observation.record") {
     const payload = envelope.payload;
-    const record = { id: payload.id || nextId(data.observations.observations, "observation"), title: payload.title, pattern_key: payload.pattern_key, status: payload.status || "open", evidence: payload.evidence, suggested_rule: payload.suggested_rule ?? null, proposal_id: payload.proposal_id ?? null, created_at: payload.created_at || now, resolved_at: payload.resolved_at ?? null };
+    const record = { id: nextWorkspaceId(data, data.observations.observations, "observation", payload.id), title: payload.title, pattern_key: payload.pattern_key, status: payload.status || "open", evidence: payload.evidence, suggested_rule: payload.suggested_rule ?? null, proposal_id: payload.proposal_id ?? null, created_at: payload.created_at || now, resolved_at: payload.resolved_at ?? null };
     validateOrThrow("observation", record);
     data.observations.observations.push(record);
     changedStores.add("observations");
@@ -93,7 +107,7 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     const payload = envelope.payload;
     const observationIds = normalizeArray(payload.observation_ids);
     if (!observationIds.length && !payload.manual_reason) throw new Error(JSON.stringify({ code: "rule_evidence_required", fix: "Link observations or provide a manual_reason" }));
-    const record = { id: payload.id || nextId(data.proposals.proposals, "proposal"), title: payload.title, status: "proposed", observation_ids: observationIds, proposed_rule: payload.proposed_rule, scope: payload.scope, expected_benefit: payload.expected_benefit, possible_side_effects: payload.possible_side_effects, evaluation_metric: payload.evaluation_metric, review_at: payload.review_at, manual_reason: payload.manual_reason ?? null, approved_by: null, approved_at: null, effective_at: null, pattern_key: payload.pattern_key ?? null };
+    const record = { id: nextWorkspaceId(data, data.proposals.proposals, "proposal", payload.id), title: payload.title, status: "proposed", observation_ids: observationIds, proposed_rule: payload.proposed_rule, scope: payload.scope, expected_benefit: payload.expected_benefit, possible_side_effects: payload.possible_side_effects, evaluation_metric: payload.evaluation_metric, review_at: payload.review_at, manual_reason: payload.manual_reason ?? null, approved_by: null, approved_at: null, effective_at: null, pattern_key: payload.pattern_key ?? null };
     validateOrThrow("proposal", record);
     data.proposals.proposals.push(record);
     for (const id of record.observation_ids) {

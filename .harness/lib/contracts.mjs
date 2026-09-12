@@ -44,6 +44,16 @@ export const OPERATION_SPECS = Object.freeze({
     status_kinds: ["project"],
     note: "只更新提供的字段；改变目标、范围、成功标准或预算需要对话确认。",
   },
+  "status.update": {
+    fields: { content: "string" },
+    required: ["content"],
+    note: "以事务方式更新项目状态摘要；不改变结构化事实。",
+  },
+  "memory.current.update": {
+    fields: { content: "string" },
+    required: ["content"],
+    note: "以事务方式更新短期工作记忆；内容受配置大小上限约束。",
+  },
   "stakeholder.upsert": { fields: fieldTypes("stakeholder"), create_required: ["name", "role"], update_required: ["id"], status_kinds: ["stakeholder"] },
   "source.register": {
     fields: { ...fieldTypes("source"), raw_path: "workspacePath", archive_reason: "string", items: "inboxItemArray" },
@@ -133,6 +143,7 @@ export const OPERATION_SPECS = Object.freeze({
   },
   "rule.activate": { fields: { id: "string" }, required: ["id"], status_kinds: ["proposal"], note: "必须由用户明确确认。" },
   "rule.retire": { fields: { id: "string" }, required: ["id"], status_kinds: ["rule"], note: "必须由用户明确确认。" },
+  "operation.compensate": { fields: { operation_id: "string" }, required: ["operation_id"], note: "实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和人工维护的文档不可直接补偿，状态与当前记忆摘要可以事务撤销。" },
   "workflow.apply": { fields: { kind: "string", operations: "operationArray" }, required: ["kind", "operations"], note: "operations 按依赖顺序排列；不支持嵌套工作流。" },
 });
 
@@ -172,7 +183,7 @@ export const COMPOSITE_TYPES = Object.freeze({
 });
 const ACTOR_FIELDS = new Set(["kind", "id", "name"]);
 const STORE_SHAPES = Object.freeze({
-  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint", "archive_roots"]],
+  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint", "archive_roots"]],
   project: ["project/project.json", ["schema_version", "initialized", "id", "name", "status", "timezone", "objective", "scope_in", "scope_out", "success_criteria", "constraints", "budget", "created_at", "updated_at"]],
   stakeholders: ["project/stakeholders.json", ["schema_version", "stakeholders"]],
   schedule: ["project/schedule.json", ["schema_version", "baseline", "milestones", "tasks"]],
@@ -309,7 +320,7 @@ export function validateWorkspaceContract(data) {
   }
   const nested = [
     [data.schedule?.baseline, new Set(["revision", "status", "digest", "approved_by_id", "approved_at", "change_request_id"]), "project/schedule.json", "baseline."],
-    ...((data.changes?.operations || []).map((item, index) => [item, new Set(["operation_id", "request_hash", "type", "target_ids", "recorded_at", "result"]), "governance/change-log.json", `operations[${index}].`])),
+    ...((data.changes?.operations || []).map((item, index) => [item, new Set(["operation_id", "request_hash", "type", "target_ids", "recorded_at", "result", "compensation"]), "governance/change-log.json", `operations[${index}].`])),
   ];
   for (const [value, allowed, path, prefix] of nested) {
     const local = [];

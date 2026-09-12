@@ -9,6 +9,7 @@ export async function applyWorkflow(envelope, applyStep) {
   const steps = [];
   for (const [index, step] of envelope.payload.operations.entries()) {
     if (step.type === "workflow.apply") throw new Error(JSON.stringify({ code: "nested_workflow_not_supported", index }));
+    if (step.type === "operation.compensate") throw new Error(JSON.stringify({ code: "compensation_workflow_not_supported", index, fix: "补偿操作必须单独执行，不能嵌入复合工作流" }));
     const child = {
       schema_version: SCHEMA_VERSION,
       operation_id: `${envelope.operation_id}.step-${String(index + 1).padStart(2, "0")}`,
