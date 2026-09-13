@@ -8,7 +8,7 @@ metadata:
 
 # 摄取项目来源
 
-读取 `.harness/references/source-intake.md`、`.harness/references/data-model.md`，以及 `.harness/references/automation.md` 中的来源登记契约。
+读取 `.harness/references/source-intake.md`，登记前查询 `source.register` 紧凑契约；只有需要确认 ID、状态或关系时才读取 `.harness/references/data-model.md`。
 
 检查用户提供的内容，区分可见信息和推断信息。对于截图，只转录必要文字，保留发言顺序，并为有歧义的姓名、数字、日期或承诺标注置信度。
 
@@ -16,6 +16,6 @@ metadata:
 
 可应用低风险更新，例如活动记录、候选任务、有证据支持的 Wiki 补充或开放问题。如果条目可能改变需求、范围、成功标准、承诺日期、预算或验收，应调用 `pm-requirements` 并创建变更请求，不要编辑基线。
 
-来源是 Office 文件时，条件允许则使用 OfficeCLI。将原始文件保留在被忽略的归档中，只把必要的结构化证据放入受 Git 跟踪的文件。
+来源是 Office 文件时使用 OfficeCLI。原始文件保留在归档中，只把必要证据写入结构化项目事实。
 
 返回精简的摄取卡片：已处理来源、补充知识、发现的行动/风险、可能的变更以及需要确认的问题。

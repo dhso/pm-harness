@@ -10,7 +10,7 @@
 
 每条观察使用稳定 `pattern_key` 聚合同类问题，并记录 `open | resolved | dismissed` 状态。关联规则提案时，观察的 `proposal_id` 与提案的 `observation_ids` 应相互对应。
 
-不得把猜测、临时讨论、一次性措辞或敏感秘密固化为记忆。
+不得把猜测、临时讨论或一次性措辞固化为记忆。
 
 ## 规则提案
 
@@ -24,4 +24,4 @@
 
 `governance/rules.json` 是规则事实源，`governance/rules.md` 自动生成。达到阈值时 `maintain` 只生成一份按 `pattern_key` 去重的提案，绝不自动激活。用户批准后才激活；后续比较规则生效后的同类观察，并建议保留、收窄、修订或退役。
 
-提案生命周期为 `proposed → approved → active`，也可进入 `rejected` 或 `retired`。批准时间、生效时间和复查时间分别记录；只有 `active` 规则进入生成视图。内置审批、事务、证据和 Git 护栏不可由项目级规则覆盖。
+提案生命周期为 `proposed → approved → active`，也可进入 `rejected` 或 `retired`。批准时间、生效时间和复查时间分别记录；只有 `active` 规则进入生成视图。内置审批、事务和证据护栏不可由项目级规则覆盖。

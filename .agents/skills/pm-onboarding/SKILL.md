@@ -21,6 +21,6 @@ metadata:
 
 每轮最多询问三个高影响问题。对缺失的低影响细节提供合理假设，不要把引导变成长表单。
 
-分配 ID 或状态前读取 `.harness/references/data-model.md`。使用 `.harness/references/automation.md` 中仅供 Agent 使用的初始化契约。在 `project/stakeholders.json` 中单独登记干系人；授予审批范围需要用户明确确认。只有具备有效计划权限时才创建初始基线，然后更新当前状态和记忆，并执行重建和 lint。
+初始化前查询 `project.initialize` 紧凑契约；只有需要确认 ID、状态或关系时才读取 `.harness/references/data-model.md`。单独登记干系人，授予审批范围须由用户明确确认；只有具备有效计划权限时才创建初始基线。最后更新状态和记忆，并执行重建和 lint。
 
 最后给出简短的项目摘要、剩余未知事项和最有用的下一步行动。
