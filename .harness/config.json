@@ -13,7 +13,6 @@
   "verify_archive_hash_on_lint": true,
   "archive_roots": [
     "archive/files",
-    "deliverables/.render",
     ".harness/cache",
     ".harness/tmp",
     ".harness/backups"

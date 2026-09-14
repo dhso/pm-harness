@@ -25,6 +25,14 @@
 - 相对日期先按项目时区解析再持久化，事件用 ISO 8601 时间戳。
 - 只保留结果、决定、必要证据和下一步，不存对话或工具轨迹。
 
+## 工具临时产物
+
+`<harness_root_dir>`：包含 `AGENTS.md` 和 `.harness/` 的项目根；`<tmp_task_dir>`：`<harness_root_dir>/.harness/tmp/tasks/<task-key>/`。二者是路径占位符，不是环境变量；`task-key` 使用本任务唯一短名。
+
+- 在 `<harness_root_dir>` 执行 Harness 命令和项目读写；不得在 `<tmp_task_dir>` 执行项目操作或存放持久文件副本。
+- 外部工具临时产物写入 `<tmp_task_dir>`，调用方式由对应 capability Skill 约束；`<harness_root_dir>/.harness/scripts/` 只存 Harness 正式代码。
+- 先将需保留的结果写入规范路径，再精确清理 `<tmp_task_dir>`；不得整体清空 `<harness_root_dir>/.harness/tmp/` 或操作其中其他内容。
+
 ## 对外表达
 
 对外内容（交付物、邮件、汇报、Office 页面、图表、附件）不得在正文出现内部 ID、路径、`operation_id`、工作流或内部状态；使用受众能直接理解的措辞。含内部术语的版本必须标为内部材料；交付前提醒用户检查凭证、Token、私钥和 `.env` 等敏感内容。

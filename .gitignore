@@ -3,7 +3,6 @@ archive/files/**
 !archive/files/.gitkeep
 
 # Generated previews and transient work
-deliverables/.render/
 .harness/cache/
 .harness/tmp/
 .harness/backups/

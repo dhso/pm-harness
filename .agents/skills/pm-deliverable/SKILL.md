@@ -15,9 +15,9 @@ metadata:
 
 正式报告使用 `pm-communication` 组织叙述；本 Skill 负责文件、版本、评审和交付生命周期。
 
-在初稿之前或同时登记交付物。工作文件放在 `deliverables/current/`；使用清晰稳定的文件名并递增版本。绝不覆盖已批准的终稿。
+在初稿之前或同时登记交付物。`<tmp_task_dir>` 不是交付物工作副本；可评审或继续使用的文件必须在清理前进入 `<harness_root_dir>/deliverables/current/`，使用清晰稳定的文件名并递增版本。绝不覆盖已批准的终稿。
 
-涉及 DOCX、XLSX 或 PPTX 时，使用 [officecli](../officecli/SKILL.md) 处理文件和格式校验；视觉质量重要时生成临时预览，完成检查后不将预览作为长期项目资料。
+涉及 DOCX、XLSX 或 PPTX 时，使用 [officecli](../officecli/SKILL.md) 处理文件和格式校验。
 
 交付物面向外部受众时，使用 `pm-communication` 的对外表达规则复核正文、页面、图表和附件。
 

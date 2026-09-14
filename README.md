@@ -183,9 +183,10 @@ Wiki 只保存整理后的项目知识和必要引用，不复制整封邮件、
 |---|---|---|
 | `deliverables/current/` | 当前正在编写、评审或使用的交付物 | 当前工作文件 |
 | `deliverables/final/` | 已批准且仍需保留的正式终稿 | 长期交付文件 |
-| `deliverables/.render/` | Office 文件视觉检查产生的临时图片或预览 | 可删除临时文件 |
 | `deliverables/index.json` | 交付物 ID、版本、状态、受众、用途、批准文件哈希、时间、验收和替代关系的事实源 | 结构化事实 |
 | `deliverables/index.md` | 给人阅读的交付物状态表 | 自动生成视图 |
+
+AI Agent 始终以项目根作为项目操作基准。需保留的内容直接写入规范路径；外部工具产生的临时产物按任务放在 `.harness/tmp/tasks/<task-key>/`。
 
 标准状态为：
 
@@ -292,7 +293,8 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
 | `.harness/lib/maintain.mjs` | 单次安全重建、完整检查、规则候选与到期复查 |
 | `.harness/scripts/harness.mjs` | AI Agent 调用后台能力的统一入口 |
-| `.harness/tmp/` | AI Agent 执行本地维护时使用的临时输入 |
+| `.harness/tmp/tasks/<task-key>/` | 按任务隔离的工具临时产物；不是项目工作副本 |
+| `.harness/tmp/` 其他内容 | Harness 临时输入、事务、写锁和来源摄取暂存区；不得整体清理 |
 | `.harness/cache/` | 可重新生成的缓存 |
 | `.harness/backups/` | 可删除的临时恢复材料 |
 
@@ -371,7 +373,7 @@ AI Agent 会先积累观察证据；达到重复阈值后形成有评价指标�
 
 ## Office 文件
 
-安装 OfficeCLI 后，AI Agent 可以读取、创建、修改和校验 DOCX、XLSX、PPTX，并在需要时生成可删除的临时预览进行视觉检查。
+安装 OfficeCLI 后，AI Agent 可以读取、创建、修改和校验 DOCX、XLSX、PPTX；制作过程产生的工具临时产物按任务隔离。
 
 OfficeCLI 缺失时，AI Agent 只会在任务确实需要 Office 文件时说明情况，不会自动安装。当前版本不承诺 PDF 输入解析能力；PDF 可作为归档来源保存，但是否能够可靠读取取决于当前环境可用工具。
 
