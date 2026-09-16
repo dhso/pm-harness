@@ -106,6 +106,7 @@ pm-harness/
 ├── governance/                有效规则、规则提案和变更记录
 ├── archive/                   本地原始资料及其可追溯索引
 ├── templates/                 常用项目管理文档模板
+├── tmp/                       按任务隔离的外部工具任务沙箱
 ├── .agents/skills/            实体、可跨平台复制的项目管理 Skills
 ├── .harness/                  后台自动化、数据契约和检查规则
 ├── tests/                     Harness 自动回归测试
@@ -186,7 +187,7 @@ Wiki 只保存整理后的项目知识和必要引用，不复制整封邮件、
 | `deliverables/index.json` | 交付物 ID、版本、状态、受众、用途、批准文件哈希、时间、验收和替代关系的事实源 | 结构化事实 |
 | `deliverables/index.md` | 给人阅读的交付物状态表 | 自动生成视图 |
 
-AI Agent 始终以项目根作为项目操作基准。需保留的内容直接写入规范路径；外部工具产生的临时产物按任务放在 `.harness/tmp/tasks/<task-key>/`。
+AI Agent 始终以项目根作为项目操作基准，需保留的内容直接写入规范路径。
 
 标准状态为：
 
@@ -293,10 +294,11 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
 | `.harness/lib/maintain.mjs` | 单次安全重建、完整检查、规则候选与到期复查 |
 | `.harness/scripts/harness.mjs` | AI Agent 调用后台能力的统一入口 |
-| `.harness/tmp/tasks/<task-key>/` | 按任务隔离的工具临时产物；不是项目工作副本 |
-| `.harness/tmp/` 其他内容 | Harness 临时输入、事务、写锁和来源摄取暂存区；不得整体清理 |
+| `.harness/tmp/` | Harness 输入、事务、写锁和来源摄取暂存区 |
 | `.harness/cache/` | 可重新生成的缓存 |
 | `.harness/backups/` | 可删除的临时恢复材料 |
+
+每个外部工具任务使用 `tmp/<task-key>/` 作为沙箱。任务结束后只清理当前任务目录。
 
 AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、交付物和规则视图，随后检查日期、状态、重复 ID、失效引用、审批范围、基线摘要、任务依赖、完成证据、交付生命周期、Wiki 生命周期、归档哈希、规则提案、补偿快照和生成文件漂移。
 

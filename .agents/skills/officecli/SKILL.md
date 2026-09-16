@@ -18,15 +18,20 @@ OfficeCLI 用于处理 `.docx`、`.xlsx` 和 `.pptx`，不依赖本机安装 Off
 - 不确定命令、路径或属性名称时，先运行 `officecli help` 或 `officecli help <格式> <元素>`，不要猜测。
 - 优先使用分层策略：L1 读取/检查，L2 DOM 编辑，L3 原始 XML；只有上一层无法表达需求时才降级。
 - 长流程可用 `open` 和 `close` 保持驻留；交给其他程序读取前必须 `save` 或 `close`。
-- 产生临时产物前，按 `AGENTS.md` 创建 `<tmp_task_dir>`。OfficeCLI 及其辅助命令从 `<harness_root_dir>` 调用，并将临时输出显式指向 `<tmp_task_dir>`。
-- 仅当制作命令无法指定旁路输出时，才为该次调用使用 `<tmp_task_dir>`；调用结束后回到 `<harness_root_dir>`，不在 `<tmp_task_dir>` 执行 Harness 命令或项目文件编辑。
+- 产生临时产物前，按 `AGENTS.md` 创建任务沙箱 `<tmp_dir>/<task-key>/`。
+- 从 `<harness_root_dir>` 调用 OfficeCLI 及其辅助命令。
+- 将临时输出显式指向任务沙箱。
 
 ## 标准流程
 
 1. 用 `view` 检查结构、文本和 issues，必要时用 `get` 或 `query` 精确定位。
-2. 用 `create`、`add`、`set`、`move`、`swap` 或 `remove` 创建和修改 `<tmp_task_dir>` 内的候选文件；多项变更优先使用 `batch`。
-3. 用 `validate` 和/或 `view <文件> issues` 检查结构、内容与格式；视觉预览和检查文件仍写入 `<tmp_task_dir>`。
-4. 清理 `<tmp_task_dir>` 前，将需保留的 Office 文件移入 `<harness_root_dir>/deliverables/current/`，并将正式文件路径和检查结果交回 `pm-deliverable` 登记。
+2. 在任务沙箱内用 `create`、`add`、`set`、`move`、`swap` 或 `remove` 创建和修改候选文件。
+3. 多项变更优先使用 `batch`。
+4. 用 `validate` 和/或 `view <文件> issues` 检查结构、内容与格式。
+5. 将预览和检查文件写入任务沙箱。
+6. 将需保留的 Office 文件移入 `<harness_root_dir>/deliverables/current/`。
+7. 将正式文件路径和检查结果交回 `pm-deliverable` 登记。
+8. 按 `AGENTS.md` 清理当前任务沙箱。
 
 `officecli` 的路径通常从 `/` 开始；元素路径使用 1 基索引，`--index` 通常为 0 基索引。含 `[1]` 等括号的路径必须加引号。属性统一通过 `--prop` 传入，不要使用未定义的顶层参数。优先使用稳定的 `@id=` 或 `@name=` 路径，避免插入或删除后位置索引漂移。
 

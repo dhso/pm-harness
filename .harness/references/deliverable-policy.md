@@ -21,6 +21,9 @@
 
 ## OfficeCLI
 
-DOCX、XLSX、PPTX 优先使用 OfficeCLI，并按 `AGENTS.md` 隔离工具临时产物。完成结构校验和 issues 检查后，在清理 `<tmp_task_dir>` 前把需保留的文件移入 `<harness_root_dir>/deliverables/current/`；预览和检查文件不作为项目资料。
+- DOCX、XLSX、PPTX 优先使用 OfficeCLI。
+- 按 `AGENTS.md` 使用任务沙箱。
+- 完成结构校验和 issues 检查后，将需保留的文件移入 `<harness_root_dir>/deliverables/current/`。
+- `<tmp_dir>/<task-key>/` 下的临时预览和检查文件不作为项目资料。
 
 OfficeCLI 缺失时只在任务确实需要时提示用户，不自动安装。首版不声称支持 PDF 输入解析。

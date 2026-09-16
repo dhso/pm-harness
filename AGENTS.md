@@ -25,13 +25,20 @@
 - 相对日期先按项目时区解析再持久化，事件用 ISO 8601 时间戳。
 - 只保留结果、决定、必要证据和下一步，不存对话或工具轨迹。
 
-## 工具临时产物
+## 临时目录
 
-`<harness_root_dir>`：包含 `AGENTS.md` 和 `.harness/` 的项目根；`<tmp_task_dir>`：`<harness_root_dir>/.harness/tmp/tasks/<task-key>/`。二者是路径占位符，不是环境变量；`task-key` 使用本任务唯一短名。
+以下名称是路径占位符，不是环境变量；`task-key` 使用本任务唯一短名。
 
-- 在 `<harness_root_dir>` 执行 Harness 命令和项目读写；不得在 `<tmp_task_dir>` 执行项目操作或存放持久文件副本。
-- 外部工具临时产物写入 `<tmp_task_dir>`，调用方式由对应 capability Skill 约束；`<harness_root_dir>/.harness/scripts/` 只存 Harness 正式代码。
-- 先将需保留的结果写入规范路径，再精确清理 `<tmp_task_dir>`；不得整体清空 `<harness_root_dir>/.harness/tmp/` 或操作其中其他内容。
+| 占位符 | 路径 | 用途 |
+|---|---|---|
+| `<harness_root_dir>` | 包含 `AGENTS.md` 和 `.harness/` 的项目根 | 作为项目根目录 |
+| `<harness_tmp_dir>` | `<harness_root_dir>/.harness/tmp` | Harness 输入、事务、写锁和来源摄取暂存 |
+| `<tmp_dir>` | `<harness_root_dir>/tmp` | 外部工具、任务沙箱的临时目录 |
+
+- 每个 Harness 系统外任务使用 `<tmp_dir>/<task-key>/` 作为独立任务沙箱。
+- 任务沙箱用于放该任务的临时输入、工作文件、执行脚本和输出。
+- 清理任务沙箱前，将需保留的结果、交付物等按照规则写入规范路径。
+- 任务结束后，只清理当前任务沙箱，不得影响 `<harness_tmp_dir>`。
 
 ## 对外表达
 

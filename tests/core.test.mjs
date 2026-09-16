@@ -107,6 +107,15 @@ test("base template rebuilds, passes lint, uses LF, and has real Skills", async 
   assert.equal((await lstat(path.join(root, ".agents/skills"))).isSymbolicLink(), false);
   assert.equal((await readJson(root, "activity/log.json")).schema_version, SCHEMA_VERSION);
   for (const relative of ["AGENTS.md", ".harness/lib/core.mjs", "project/schedule.json"]) assert.ok(!(await readFile(path.join(root, relative), "utf8")).includes("\r\n"));
+  const agentRules = await readFile(path.join(root, "AGENTS.md"), "utf8");
+  assert.match(agentRules, /<harness_tmp_dir>.*<harness_root_dir>\/\.harness\/tmp/);
+  assert.match(agentRules, /<tmp_dir>.*<harness_root_dir>\/tmp/);
+  assert.match(agentRules, /<tmp_dir>\/<task-key>\//);
+  assert.doesNotMatch(agentRules, /<tmp_task_dir>|\.harness\/tmp\/tasks/);
+  assert.ok((await readFile(path.join(root, ".gitignore"), "utf8")).split("\n").includes("/tmp/"));
+  const archiveRoots = (await readJson(root, ".harness/config.json")).archive_roots;
+  assert.ok(archiveRoots.includes("tmp"));
+  assert.ok(archiveRoots.includes(".harness/tmp"));
 });
 
 test("lint enforces the 500-line Harness module boundary", async () => {
