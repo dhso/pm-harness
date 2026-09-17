@@ -24,6 +24,10 @@ function safeName(value) {
   return String(value).replace(/[^A-Za-z0-9._-]/g, "-");
 }
 
+function harnessTemporaryRoot(root) {
+  return path.join(root, "tmp", "harness");
+}
+
 async function releaseOwnedLock(handle, lockPath, token) {
   await handle.close();
   try {
@@ -44,7 +48,7 @@ async function acquireRecoveryLock(temporaryRoot) {
     if (error.code === "EEXIST") {
       throw new Error(JSON.stringify({
         code: "workspace_lock_recovery_busy",
-        path: `.harness/tmp/${LOCK_RECOVERY_FILE}`,
+        path: `tmp/harness/${LOCK_RECOVERY_FILE}`,
         fix: "Another process is recovering the workspace lock; wait for it to finish, then retry once",
       }));
     }
@@ -61,7 +65,7 @@ async function acquireRecoveryLock(temporaryRoot) {
 }
 
 export async function acquireWorkspaceLock(root) {
-  const temporaryRoot = path.join(root, ".harness", "tmp");
+  const temporaryRoot = harnessTemporaryRoot(root);
   const lockPath = path.join(temporaryRoot, "write.lock");
   await mkdir(temporaryRoot, { recursive: true });
   const token = randomUUID();
@@ -129,7 +133,7 @@ async function writeManifest(transactionRoot, manifest) {
 }
 
 async function recoverTransactions(root) {
-  const temporaryRoot = path.join(root, ".harness", "tmp");
+  const temporaryRoot = harnessTemporaryRoot(root);
   const entries = await readdir(temporaryRoot, { withFileTypes: true });
   for (const entry of entries.filter((item) => item.isDirectory() && item.name.startsWith("tx-"))) {
     const transactionRoot = path.join(temporaryRoot, entry.name);
@@ -137,7 +141,7 @@ async function recoverTransactions(root) {
     try {
       manifest = JSON.parse(await readFile(path.join(transactionRoot, "manifest.json"), "utf8"));
     } catch {
-      throw new Error(JSON.stringify({ code: "transaction_recovery_required", path: `.harness/tmp/${entry.name}`, fix: "Preserve the transaction directory and inspect it before retrying" }));
+      throw new Error(JSON.stringify({ code: "transaction_recovery_required", path: `tmp/harness/${entry.name}`, fix: "Preserve the transaction directory and inspect it before retrying" }));
     }
     if (manifest.phase === "committed") {
       await rm(transactionRoot, { recursive: true, force: true });
@@ -175,7 +179,7 @@ export async function commitTransaction(root, operationId, entries, options = {}
   const duplicatePaths = entries.map((item) => item.path).filter((item, index, list) => list.indexOf(item) !== index);
   if (duplicatePaths.length) throw new Error(`Transaction contains duplicate paths: ${[...new Set(duplicatePaths)].join(", ")}`);
 
-  const temporaryRoot = path.join(root, ".harness", "tmp");
+  const temporaryRoot = harnessTemporaryRoot(root);
   const transactionRoot = path.join(temporaryRoot, `tx-${safeName(operationId)}`);
   await mkdir(temporaryRoot, { recursive: true });
 

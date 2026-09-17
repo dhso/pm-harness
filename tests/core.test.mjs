@@ -108,14 +108,15 @@ test("base template rebuilds, passes lint, uses LF, and has real Skills", async 
   assert.equal((await readJson(root, "activity/log.json")).schema_version, SCHEMA_VERSION);
   for (const relative of ["AGENTS.md", ".harness/lib/core.mjs", "project/schedule.json"]) assert.ok(!(await readFile(path.join(root, relative), "utf8")).includes("\r\n"));
   const agentRules = await readFile(path.join(root, "AGENTS.md"), "utf8");
-  assert.match(agentRules, /<harness_tmp_dir>.*<harness_root_dir>\/\.harness\/tmp/);
-  assert.match(agentRules, /<tmp_dir>.*<harness_root_dir>\/tmp/);
-  assert.match(agentRules, /<tmp_dir>\/<task-key>\//);
-  assert.doesNotMatch(agentRules, /<tmp_task_dir>|\.harness\/tmp\/tasks/);
-  assert.ok((await readFile(path.join(root, ".gitignore"), "utf8")).split("\n").includes("/tmp/"));
-  const archiveRoots = (await readJson(root, ".harness/config.json")).archive_roots;
-  assert.ok(archiveRoots.includes("tmp"));
-  assert.ok(archiveRoots.includes(".harness/tmp"));
+  assert.match(agentRules, /以下路径均相对于.*项目根/);
+  assert.match(agentRules, /`tmp\/tasks\/<task-key>\//);
+  assert.match(agentRules, /`tmp\/harness\//);
+  assert.match(agentRules, /工作目录必须是项目根/);
+  assert.match(agentRules, /npm、pip 下载缓存.*默认的用户级缓存/);
+  assert.match(agentRules, /依赖与缓存按下表放置/);
+  assert.doesNotMatch(agentRules, /<(?:harness_root|harness_tmp|harness_cache|tmp)_dir>|\.harness\/(?:tmp|cache)/);
+  const ignored = (await readFile(path.join(root, ".gitignore"), "utf8")).split("\n");
+  assert.ok(ignored.includes("/tmp/"));
 });
 
 test("lint enforces the 500-line Harness module boundary", async () => {
@@ -123,6 +124,14 @@ test("lint enforces the 500-line Harness module boundary", async () => {
   await writeFile(path.join(root, ".harness/lib/oversized.mjs"), "export {};\n".repeat(501), "utf8");
   const result = await lintWorkspace(root);
   assert.ok(result.issues.some((item) => item.code === "harness_module_too_large" && item.path === ".harness/lib/oversized.mjs"));
+});
+
+test("lint warns when dependency environments are left at a task sandbox root", async () => {
+  const root = await workspace();
+  await mkdir(path.join(root, "tmp/tasks/tool-task/node_modules"), { recursive: true });
+  await mkdir(path.join(root, "tmp/harness/node_modules"), { recursive: true });
+  const issues = (await lintWorkspace(root)).issues.filter((item) => item.code === "task_dependency_environment");
+  assert.deepEqual(issues.map((item) => item.path), ["tmp/tasks/tool-task/node_modules"]);
 });
 
 test("PM Skills have valid identities, routing metadata, and resolvable progressive references", async () => {
@@ -509,11 +518,11 @@ test("maintain stops before rule changes when the workspace has errors", async (
 
 test("agent-only CLI exposes record, contract discovery, brief, maintain, and structured errors", async () => {
   const root = await workspace();
-  const inputPath = path.join(root, ".harness/tmp/operation.json");
+  const inputPath = path.join(root, "tmp/harness/operation.json");
   await mkdir(path.dirname(inputPath), { recursive: true });
   await writeFile(inputPath, `${JSON.stringify(operation("project.initialize", { name: "CLI project", objective: "Verify CLI", timezone: "Asia/Hong_Kong", scope_in: [], scope_out: [], success_criteria: ["Works"], constraints: [] }), null, 2)}\n`, "utf8");
   const script = path.join(root, ".harness/scripts/harness.mjs");
-  const recorded = JSON.parse(execFileSync(process.execPath, [script, "record", "--input", inputPath], { cwd: root, encoding: "utf8" }));
+  const recorded = JSON.parse(execFileSync(process.execPath, [script, "record", "--input", "tmp/harness/operation.json"], { cwd: root, encoding: "utf8" }));
   assert.equal(recorded.ok, true);
   const contract = JSON.parse(execFileSync(process.execPath, [script, "contract", "activity.record", "--compact"], { cwd: root, encoding: "utf8" }));
   assert.deepEqual(contract.required, ["action", "outcome"]);
@@ -531,6 +540,24 @@ test("agent-only CLI exposes record, contract discovery, brief, maintain, and st
   assert.equal(failed.ok, false);
   assert.equal(failed.error.code, "operation_failed");
   assert.ok(failed.suggestion);
+});
+
+test("CLI requires cwd to be exactly its own workspace root", async () => {
+  const root = await workspace();
+  const taskRoot = path.join(root, "tmp/tasks/cli-cwd-mismatch");
+  await mkdir(taskRoot, { recursive: true });
+  const outside = await mkdtemp(path.join(os.tmpdir(), "pm-harness-outside-"));
+  const script = path.join(root, ".harness/scripts/harness.mjs");
+  for (const cwd of [taskRoot, outside]) {
+    let failed;
+    try {
+      execFileSync(process.execPath, [script, "lint", "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      failed = JSON.parse(error.stdout);
+    }
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error.code, "workspace_cwd_mismatch");
+  }
 });
 
 test("complete workflow covers intake, change approval, planning, activity, delivery draft, Wiki, brief, maintain, and lint", async () => {

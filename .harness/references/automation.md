@@ -2,14 +2,21 @@
 
 这些接口只供 AI Agent 在项目根目录调用。不得要求项目经理复制命令、编辑 JSON 或维护生成文件。运行环境需要 Node 20；缺失时停止结构化写入并向用户说明机械护栏不可用。
 
-含用户原文或长文本的输入放在临时目录 `.harness/tmp/`，完成后清理；执行工具能直接写 stdin 时也可通过 stdin 传入。失败时读取结构化错误并修正输入、补充审批或请求用户判断；不得绕过校验或无限重试。
+## 执行根与临时目录
+
+- 目录和依赖放置以 `AGENTS.md` 为准。Harness CLI 要求当前工作目录精确等于项目根；相对输入路径也按项目根解析。
+- `tmp/harness/` 只用于 Harness 内部操作，`tmp/tasks/<task-key>/` 只用于单次外部任务。
+- 包管理器使用默认用户级下载缓存；正式依赖放根依赖环境；任务沙箱不得包含依赖环境或包管理器缓存。
+- 任务结束只清理当前 `tmp/tasks/<task-key>/`，不清理 `tmp/harness/`、`tmp/tasks/` 或其他任务目录。
+
+含用户原文或长文本的 Harness 输入放在 `tmp/harness/`，完成后清理；执行工具能直接写 stdin 时也可通过 stdin 传入。失败时读取结构化错误并修正输入、补充审批或请求用户判断；不得绕过校验或无限重试。
 
 ## 统一 `record`
 
 入参支持三种方式。任意文本优先用文件或执行工具的直接 stdin，避免 shell 转义；`--data` 只用于不含外部原文的简短 JSON：
 
 ```text
-node .harness/scripts/harness.mjs record --input .harness/tmp/operation.json
+node .harness/scripts/harness.mjs record --input tmp/harness/operation.json
 node .harness/scripts/harness.mjs record --data '<short-json>'
 # 或启动命令后通过执行工具直接写入 stdin
 node .harness/scripts/harness.mjs record
@@ -50,12 +57,12 @@ node .harness/scripts/harness.mjs record --dry-run --data '<json>'
 以下入口保留给已有工作流，内部仍转换为统一 `record`：
 
 ```text
-node .harness/scripts/harness.mjs init --input .harness/tmp/init.json
-node .harness/scripts/harness.mjs source-add --input .harness/tmp/source.json
-node .harness/scripts/harness.mjs activity-add --input .harness/tmp/activity.json
+node .harness/scripts/harness.mjs init --input tmp/harness/init.json
+node .harness/scripts/harness.mjs source-add --input tmp/harness/source.json
+node .harness/scripts/harness.mjs activity-add --input tmp/harness/activity.json
 ```
 
-来源 `raw_path` 必须位于项目目录内，临时接收的附件优先放在被忽略的 `.harness/tmp/intake/`。原件复制到 `archive/files/<year>/`；结构化来源、收件箱条目和归档索引在同一事务中提交。不要未经用户授权删除原输入文件。
+来源 `raw_path` 必须位于项目目录内，临时接收的附件优先放在被忽略的 `tmp/harness/intake/`。原件复制到 `archive/files/<year>/`；结构化来源、收件箱条目和归档索引在同一事务中提交。不要未经用户授权删除原输入文件。
 
 ## 读取与维护
 
@@ -74,7 +81,7 @@ node .harness/scripts/harness.mjs undo <operation_id> --confirmed-at <ISO-8601>
 - `contract` 只返回一个操作的字段、必填项、默认值和状态转换；AI 优先使用 `--compact`。
 - `brief` 提供近期活动和不超过三个带原因的首要行动，不把完整 JSON 原样转给用户。
 - `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
-- `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
+- `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照，并提示任务沙箱根目录中残留的依赖环境或包管理器缓存。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
 - `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。
 - `status.update` 和 `memory.current.update` 用事务更新人读摘要；不要在事实 JSON 已提交后再用非事务方式覆盖这两个文件。
 - `lint` 会提示过大的结构化 Store。读取优先使用 `query --fields ... --limit ...`，不要把完整 JSON 复制进对话；压缩或归档必须保留事实、ID 和审计可追溯性。

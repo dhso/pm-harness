@@ -7,7 +7,7 @@
 ## 摄取步骤
 
 1. 识别来源类型、渠道、发送者、可见的原始时间和线程信息。
-2. 原始文件可访问时先在 `.harness/tmp/intake/` 暂存，再事务复制到 `archive/files/<year>/`；计算 SHA-256 并登记到 `knowledge/sources.json`。
+2. 原始文件可访问时先在 `tmp/harness/intake/` 暂存，再事务复制到 `archive/files/<year>/`；计算 SHA-256 并登记到 `knowledge/sources.json`。
 3. 对邮件线程、转发内容、重复截图和粘贴副本去重。保留最新消息与必要上下文，不把签名和整段引用历史当作新内容。
 4. 截图转录按说话人和顺序保存必要引用。看不清的文字标为不确定，不猜测姓名、数字、日期或语气。
 5. 将内容拆成独立条目：`fact | feedback | request | decision | commitment | action | risk | issue | question | assumption`。

@@ -167,11 +167,11 @@ test("controlled changes, human-authored files, and later conflicts are refused"
 
 test("source compensation removes indexes, retains raw archives, and reserves source and archive IDs", async () => {
   const root = await workspace();
-  const inputPath = path.join(root, ".harness/tmp/source.txt");
+  const inputPath = path.join(root, "tmp/harness/source.txt");
   await mkdir(path.dirname(inputPath), { recursive: true });
   await writeFile(inputPath, "evidence one", "utf8");
   const first = await recordOperation(root, operation("source.register", {
-    type: "daily_note", title: "Evidence one", raw_path: ".harness/tmp/source.txt", items: [{ classification: "fact", summary: "Fact one" }],
+    type: "daily_note", title: "Evidence one", raw_path: "tmp/harness/source.txt", items: [{ classification: "fact", summary: "Fact one" }],
   }));
   const archivedPath = first.source.archived_path;
   const undone = await compensate(root, first.operation_id);
@@ -183,7 +183,7 @@ test("source compensation removes indexes, retains raw archives, and reserves so
 
   await writeFile(inputPath, "evidence two", "utf8");
   const second = await recordOperation(root, operation("source.register", {
-    type: "daily_note", title: "Evidence two", raw_path: ".harness/tmp/source.txt", items: [{ classification: "fact", summary: "Fact two" }],
+    type: "daily_note", title: "Evidence two", raw_path: "tmp/harness/source.txt", items: [{ classification: "fact", summary: "Fact two" }],
   }));
   assert.equal(second.source.id, "SRC-002");
   assert.equal((await readJson(root, "archive/index.json")).files[0].id, "ARC-002");
@@ -200,10 +200,10 @@ test("CLI undo uses compensation without requiring a Git repository", async () =
 
 test("the workspace lock covers read, validation, mutation, and transaction commit", async () => {
   const root = await workspace();
-  const inputPath = path.join(root, ".harness/tmp/large-source.bin");
+  const inputPath = path.join(root, "tmp/harness/large-source.bin");
   await mkdir(path.dirname(inputPath), { recursive: true });
   await writeFile(inputPath, Buffer.alloc(16 * 1024 * 1024, 7));
-  const source = operation("source.register", { type: "other", title: "Large source", raw_path: ".harness/tmp/large-source.bin", items: [] });
+  const source = operation("source.register", { type: "other", title: "Large source", raw_path: "tmp/harness/large-source.bin", items: [] });
   const activity = operation("activity.record", activityPayload("Concurrent activity"));
   const outcomes = await Promise.allSettled([recordOperation(root, source), recordOperation(root, activity)]);
   assert.equal(outcomes.filter((item) => item.status === "fulfilled").length, 1, JSON.stringify(outcomes.map((item) => item.status === "rejected" ? item.reason?.message : item.value)));
@@ -214,7 +214,7 @@ test("the workspace lock covers read, validation, mutation, and transaction comm
 
 test("only one writer can reclaim a stale workspace lock", async () => {
   const root = await workspace();
-  const temporaryRoot = path.join(root, ".harness/tmp");
+  const temporaryRoot = path.join(root, "tmp/harness");
   await mkdir(temporaryRoot, { recursive: true });
   await writeFile(path.join(temporaryRoot, "write.lock"), `${JSON.stringify({ pid: process.pid + 1000000, hostname: os.hostname(), acquired_at: new Date(0).toISOString() })}\n`, "utf8");
   const { acquireWorkspaceLock } = await import("../.harness/lib/transaction.mjs");
@@ -234,7 +234,7 @@ test("a dead workspace lock recovers an interrupted transaction before the next 
   const root = await workspace();
   const target = path.join(root, "project/status.md");
   const original = await readFile(target, "utf8");
-  const transactionRoot = path.join(root, ".harness/tmp/tx-interrupted");
+  const transactionRoot = path.join(root, "tmp/harness/tx-interrupted");
   await mkdir(path.join(transactionRoot, "old"), { recursive: true });
   await writeFile(path.join(transactionRoot, "old/0.data"), original, "utf8");
   await writeFile(target, "partial write\n", "utf8");
@@ -244,7 +244,7 @@ test("a dead workspace lock recovers an interrupted transaction before the next 
     phase: "applying",
     entries: [{ index: 0, path: "project/status.md", existed: true, delete: false }],
   })}\n`, "utf8");
-  await writeFile(path.join(root, ".harness/tmp/write.lock"), `${JSON.stringify({ pid: process.pid + 1000000, hostname: os.hostname(), acquired_at: new Date().toISOString() })}\n`, "utf8");
+  await writeFile(path.join(root, "tmp/harness/write.lock"), `${JSON.stringify({ pid: process.pid + 1000000, hostname: os.hostname(), acquired_at: new Date().toISOString() })}\n`, "utf8");
 
   await recordOperation(root, operation("activity.record", { action: "Recovered", outcome: "Interrupted transaction restored" }));
   assert.equal(await readFile(target, "utf8"), original);

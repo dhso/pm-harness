@@ -18,18 +18,18 @@ OfficeCLI 用于处理 `.docx`、`.xlsx` 和 `.pptx`，不依赖本机安装 Off
 - 不确定命令、路径或属性名称时，先运行 `officecli help` 或 `officecli help <格式> <元素>`，不要猜测。
 - 优先使用分层策略：L1 读取/检查，L2 DOM 编辑，L3 原始 XML；只有上一层无法表达需求时才降级。
 - 长流程可用 `open` 和 `close` 保持驻留；交给其他程序读取前必须 `save` 或 `close`。
-- 产生临时产物前，按 `AGENTS.md` 创建任务沙箱 `<tmp_dir>/<task-key>/`。
-- 从 `<harness_root_dir>` 调用 OfficeCLI 及其辅助命令。
-- 将临时输出显式指向任务沙箱。
+- 产生临时产物前，按 `AGENTS.md` 创建任务沙箱 `tmp/tasks/<task-key>/`。
+- 从项目根调用 OfficeCLI 及其辅助命令，将输入、候选文件和临时输出显式指向任务沙箱；不要切换到任务沙箱安装或运行可复用依赖。
+- OfficeCLI 从已有 `PATH` 调用；辅助工具依赖按 `AGENTS.md` 放置，不得进入任务沙箱。OfficeCLI 缺失时停止，不得自动安装。
 
 ## 标准流程
 
 1. 用 `view` 检查结构、文本和 issues，必要时用 `get` 或 `query` 精确定位。
-2. 在任务沙箱内用 `create`、`add`、`set`、`move`、`swap` 或 `remove` 创建和修改候选文件。
+2. 以任务沙箱内的候选文件为目标，用 `create`、`add`、`set`、`move`、`swap` 或 `remove` 创建和修改。
 3. 多项变更优先使用 `batch`。
 4. 用 `validate` 和/或 `view <文件> issues` 检查结构、内容与格式。
 5. 将预览和检查文件写入任务沙箱。
-6. 将需保留的 Office 文件移入 `<harness_root_dir>/deliverables/current/`。
+6. 将需保留的 Office 文件移入 `deliverables/current/`。
 7. 将正式文件路径和检查结果交回 `pm-deliverable` 登记。
 8. 按 `AGENTS.md` 清理当前任务沙箱。
 

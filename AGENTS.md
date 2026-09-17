@@ -25,20 +25,21 @@
 - 相对日期先按项目时区解析再持久化，事件用 ISO 8601 时间戳。
 - 只保留结果、决定、必要证据和下一步，不存对话或工具轨迹。
 
-## 临时目录
+## 运行目录
 
-以下名称是路径占位符，不是环境变量；`task-key` 使用本任务唯一短名。
+以下路径均相对于包含 `AGENTS.md` 和 `.harness/` 的项目根；`task-key` 使用本任务唯一短名。
 
-| 占位符 | 路径 | 用途 |
-|---|---|---|
-| `<harness_root_dir>` | 包含 `AGENTS.md` 和 `.harness/` 的项目根 | 作为项目根目录 |
-| `<harness_tmp_dir>` | `<harness_root_dir>/.harness/tmp` | Harness 输入、事务、写锁和来源摄取暂存 |
-| `<tmp_dir>` | `<harness_root_dir>/tmp` | 外部工具、任务沙箱的临时目录 |
+1. Harness 命令、项目读写和外部 CLI 的工作目录必须是项目根；任务文件通过显式路径传入，不得切换到任务沙箱执行。
+2. `tmp/harness/` 只存 Harness 输入、事务、写锁和来源摄取暂存；不得由外部任务清理。
+3. 每个外部工具任务使用唯一的 `tmp/tasks/<task-key>/`，只放临时输入、工作脚本、候选文件和输出；依赖与缓存按下表放置。
+4. 任务结束前先保存需保留的结果，再只清理当前 `tmp/tasks/<task-key>/`；不得整体清理 `tmp/`、`tmp/tasks/`，也不得清理 `tmp/harness/` 或其他任务目录。
 
-- 每个 Harness 系统外任务使用 `<tmp_dir>/<task-key>/` 作为独立任务沙箱。
-- 任务沙箱用于放该任务的临时输入、工作文件、执行脚本和输出。
-- 清理任务沙箱前，将需保留的结果、交付物等按照规则写入规范路径。
-- 任务结束后，只清理当前任务沙箱，不得影响 `<harness_tmp_dir>`。
+| 依赖类型 | 位置与规则 |
+|---|---|
+| npm、pip 下载缓存 | 使用包管理器默认的用户级缓存，不重定向到项目目录 |
+| OfficeCLI 等稳定 CLI | 从现有 `PATH` 调用；安装或升级前取得用户授权，不使用 `sudo` 或系统 Python |
+| Harness Node 依赖 | 根 `package.json`、锁文件和根 `node_modules/` |
+| Harness Python 依赖 | 根 `.venv/` 和锁定的依赖清单，不修改系统 Python |
 
 ## 对外表达
 

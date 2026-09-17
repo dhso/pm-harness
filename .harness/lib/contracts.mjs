@@ -203,7 +203,7 @@ export const COMPOSITE_TYPES = Object.freeze({
 });
 const ACTOR_FIELDS = new Set(["kind", "id", "name"]);
 const STORE_SHAPES = Object.freeze({
-  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint", "archive_roots"]],
+  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint"]],
   project: ["project/project.json", ["schema_version", "initialized", "id", "name", "status", "timezone", "objective", "scope_in", "scope_out", "success_criteria", "constraints", "budget", "created_at", "updated_at"]],
   stakeholders: ["project/stakeholders.json", ["schema_version", "stakeholders"]],
   schedule: ["project/schedule.json", ["schema_version", "baseline", "milestones", "tasks"]],

@@ -8,6 +8,7 @@ function addIssue(issues, level, code, relativePath, message) {
 }
 
 const SKILL_KINDS = new Set(["router", "workflow", "capability"]);
+const TASK_DEPENDENCY_DIRECTORIES = new Set(["node_modules", ".venv", "venv", "__pypackages__", ".npm", ".pip-cache"]);
 
 function skillFrontmatter(content) {
   const block = content.match(/^---\n([\s\S]*?)\n---/)?.[1] || "";
@@ -34,6 +35,19 @@ async function harnessModules(root) {
     }
   }
   return files;
+}
+
+async function addTaskSandboxIssues(root, issues) {
+  const taskRoot = path.join(root, "tmp", "tasks");
+  if (!existsSync(taskRoot)) return;
+  for (const task of await readdir(taskRoot, { withFileTypes: true })) {
+    if (!task.isDirectory()) continue;
+    for (const entry of await readdir(path.join(taskRoot, task.name), { withFileTypes: true })) {
+      if (!TASK_DEPENDENCY_DIRECTORIES.has(entry.name)) continue;
+      const relative = `tmp/tasks/${task.name}/${entry.name}`;
+      addIssue(issues, "warning", "task_dependency_environment", relative, "Task sandbox contains a dependency environment or package cache; use the root dependency environment or user-level tooling, then clean this task directory");
+    }
+  }
 }
 
 export async function addEnvironmentIssues(root, data, issues) {
@@ -69,6 +83,8 @@ export async function addEnvironmentIssues(root, data, issues) {
     const relative = path.relative(root, absolute).split(path.sep).join("/");
     if (lineCount > 500) addIssue(issues, "error", "harness_module_too_large", relative, `Harness module has ${lineCount} lines; split it to at most 500`);
   }
+
+  await addTaskSandboxIssues(root, issues);
 
   const currentPath = path.join(root, "memory/current.md");
   try {

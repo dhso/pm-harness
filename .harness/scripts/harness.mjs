@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   appendActivityEntry,
   buildDailyBrief,
@@ -46,11 +48,11 @@ function parseJson(raw, origin) {
   }
 }
 
-async function loadInput() {
+async function loadInput(root) {
   const inline = flagValue("--data");
   if (inline) return parseJson(inline, "--data");
   const input = flagValue("--input");
-  if (input) return parseJson(await readFile(path.resolve(process.cwd(), input), "utf8"), input);
+  if (input) return parseJson(await readFile(path.resolve(root, input), "utf8"), input);
   const piped = await readStdin();
   if (piped) return parseJson(piped, "stdin");
   throw new Error(JSON.stringify({ code: "input_required", fix: "Pass --data '<json>', --input <json-file>, or pipe JSON on stdin" }));
@@ -61,7 +63,27 @@ function print(value) {
 }
 
 const command = process.argv[2];
-const root = process.cwd();
+const scriptRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
+function requireWorkspaceRoot() {
+  const cwd = path.resolve(process.cwd());
+  if (cwd !== scriptRoot) {
+    throw new Error(JSON.stringify({
+      code: "workspace_cwd_mismatch",
+      cwd,
+      expected_root: scriptRoot,
+      fix: "Run Harness with cwd set exactly to expected_root; pass task files by explicit path instead of changing cwd",
+    }));
+  }
+  if (!existsSync(path.join(scriptRoot, "AGENTS.md")) || !existsSync(path.join(scriptRoot, ".harness", "config.json"))) {
+    throw new Error(JSON.stringify({
+      code: "workspace_root_invalid",
+      expected_root: scriptRoot,
+      fix: "Restore AGENTS.md and .harness/config.json before running Harness operations",
+    }));
+  }
+  return scriptRoot;
+}
 
 const USAGE = {
   record: "harness.mjs record [--data '<json>'|--input <file>|stdin] [--dry-run] [--compact] — 写入一条操作；字段见 contract <type> 或 .harness/references/operation-contract.md",
@@ -93,6 +115,7 @@ if (hasFlag("--help") || hasFlag("-h") || command === "help") {
 }
 
 try {
+  const root = requireWorkspaceRoot();
   if (command === "rebuild") {
     print(await rebuildWorkspace(root));
   } else if (command === "lint") {
@@ -106,7 +129,7 @@ try {
   } else if (command === "brief") {
     print(await buildDailyBrief(root));
   } else if (command === "record") {
-    print(await recordOperation(root, await loadInput(), { dryRun: hasFlag("--dry-run") }));
+    print(await recordOperation(root, await loadInput(root), { dryRun: hasFlag("--dry-run") }));
   } else if (command === "maintain") {
     print(await maintainWorkspace(root));
   } else if (command === "undo") {
@@ -115,11 +138,11 @@ try {
     if (!operationId) throw new Error(JSON.stringify({ code: "operation_id_required", fix: "Use undo <operation_id>" }));
     print(await compensateLastOperation(root, operationId, { dryRun: hasFlag("--dry-run"), confirmedByUserAt: flagValue("--confirmed-at") }));
   } else if (command === "init") {
-    print(await initializeProject(root, await loadInput()));
+    print(await initializeProject(root, await loadInput(root)));
   } else if (command === "source-add") {
-    print(await registerSource(root, await loadInput()));
+    print(await registerSource(root, await loadInput(root)));
   } else if (command === "activity-add") {
-    print(await appendActivityEntry(root, await loadInput()));
+    print(await appendActivityEntry(root, await loadInput(root)));
   } else if (command === "query") {
     // query <collection|id> [--id ID] [--where field=value ...] [--fields a,b] [--limit n]
     const positional = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;

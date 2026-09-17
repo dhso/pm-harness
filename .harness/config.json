@@ -10,12 +10,5 @@
   "memory_current_max_bytes": 4096,
   "status_max_bytes": 8192,
   "memory_current_stale_days": 14,
-  "verify_archive_hash_on_lint": true,
-  "archive_roots": [
-    "archive/files",
-    "tmp",
-    ".harness/cache",
-    ".harness/tmp",
-    ".harness/backups"
-  ]
+  "verify_archive_hash_on_lint": true
 }

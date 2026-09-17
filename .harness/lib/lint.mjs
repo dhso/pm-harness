@@ -144,7 +144,6 @@ export async function collectIssues(root, data, options = {}) {
   for (const field of ["upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days"]) {
     if (!Number.isFinite(data.config[field]) || data.config[field] <= 0) addIssue(issues, "error", "invalid_config", STORE_FILES.config, `${field} must be a positive number`);
   }
-  if (!Array.isArray(data.config.archive_roots) || !data.config.archive_roots.every((item) => typeof item === "string" && item)) addIssue(issues, "error", "invalid_config", STORE_FILES.config, "archive_roots must be a non-empty string array");
   if (data.project.initialized) {
     for (const field of ["id", "name", "timezone", "objective", "scope_in", "scope_out", "success_criteria", "constraints"]) {
       if (data.project[field] === undefined || data.project[field] === "") addIssue(issues, "error", "missing_project_field", STORE_FILES.project, `Initialized project is missing ${field}`);

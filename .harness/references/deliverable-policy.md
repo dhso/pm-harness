@@ -22,8 +22,9 @@
 ## OfficeCLI
 
 - DOCX、XLSX、PPTX 优先使用 OfficeCLI。
-- 按 `AGENTS.md` 使用任务沙箱。
-- 完成结构校验和 issues 检查后，将需保留的文件移入 `<harness_root_dir>/deliverables/current/`。
-- `<tmp_dir>/<task-key>/` 下的临时预览和检查文件不作为项目资料。
+- 按 `AGENTS.md` 从项目根调用工具，以显式路径使用任务沙箱；不得在任务沙箱安装可复用依赖。
+- OfficeCLI 从已有 `PATH` 调用；辅助工具依赖按 `AGENTS.md` 放置，不进入任务沙箱或 `tmp/harness/`。
+- 完成结构校验和 issues 检查后，将需保留的文件移入 `deliverables/current/`。
+- `tmp/tasks/<task-key>/` 下的临时预览和检查文件不作为项目资料。
 
 OfficeCLI 缺失时只在任务确实需要时提示用户，不自动安装。首版不声称支持 PDF 输入解析。

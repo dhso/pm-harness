@@ -4,9 +4,6 @@ archive/files/**
 
 # Generated previews and transient work
 /tmp/
-.harness/cache/
-.harness/tmp/
-.harness/backups/
 *.tmp
 *.bak
 *.swp
@@ -19,6 +16,10 @@ archive/files/**
 *.pem
 *.key
 
-# Node artifacts (scripts have no runtime dependencies by default)
+# Runtime dependencies (scripts have no runtime dependencies by default)
 node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
 coverage/

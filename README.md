@@ -106,7 +106,7 @@ pm-harness/
 ├── governance/                有效规则、规则提案和变更记录
 ├── archive/                   本地原始资料及其可追溯索引
 ├── templates/                 常用项目管理文档模板
-├── tmp/                       按任务隔离的外部工具任务沙箱
+├── tmp/                       Harness 内部临时数据与按任务隔离的工具沙箱
 ├── .agents/skills/            实体、可跨平台复制的项目管理 Skills
 ├── .harness/                  后台自动化、数据契约和检查规则
 ├── tests/                     Harness 自动回归测试
@@ -294,11 +294,12 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
 | `.harness/lib/maintain.mjs` | 单次安全重建、完整检查、规则候选与到期复查 |
 | `.harness/scripts/harness.mjs` | AI Agent 调用后台能力的统一入口 |
-| `.harness/tmp/` | Harness 输入、事务、写锁和来源摄取暂存区 |
-| `.harness/cache/` | 可重新生成的缓存 |
-| `.harness/backups/` | 可删除的临时恢复材料 |
+| `tmp/harness/` | Harness 输入、事务、写锁和来源摄取暂存 |
+| `tmp/tasks/<task-key>/` | 单次外部工具任务的临时输入、脚本和输出 |
 
-每个外部工具任务使用 `tmp/<task-key>/` 作为沙箱。任务结束后只清理当前任务目录。
+Harness 命令、项目读写和外部工具从项目根执行，通过显式路径访问任务文件。任务结束后只清理当前 `tmp/tasks/<task-key>/`，不得清理 Harness 内部目录或其他任务目录。
+
+npm、pip 使用默认用户级下载缓存，稳定 CLI 从 `PATH` 调用，Harness 正式依赖放在根依赖环境。任务沙箱不安装依赖。
 
 AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、交付物和规则视图，随后检查日期、状态、重复 ID、失效引用、审批范围、基线摘要、任务依赖、完成证据、交付生命周期、Wiki 生命周期、归档哈希、规则提案、补偿快照和生成文件漂移。
 
