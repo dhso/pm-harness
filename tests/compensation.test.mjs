@@ -258,3 +258,38 @@ test("transaction targets cannot escape through a workspace symlink", async () =
   await assert.rejects(commitTransaction(root, "OP-symlink-guard", [{ path: "linked-output/file.txt", content: "blocked" }]), /symbolic-link directory/);
   assert.equal(existsSync(path.join(outside, "file.txt")), false);
 });
+
+test("preference writes stay undoable because they never enter the controlled change log", async () => {
+  const root = await workspace();
+  const created = await recordOperation(root, operation("memory.preference.upsert", { scope: "communication", text: "对外邮件默认使用中文" }));
+  assert.equal(created.preference.id, "PREF-001");
+  await compensate(root, created.operation_id);
+  assert.equal((await readJson(root, "memory/preferences.json")).preferences.length, 0);
+  assert.match(await readFile(path.join(root, "memory/preferences.md"), "utf8"), /暂无已确认偏好/);
+
+  const again = await recordOperation(root, operation("memory.preference.upsert", { scope: "document", text: "周报用要点式" }));
+  const retired = await recordOperation(root, operation("memory.preference.retire", { id: again.preference.id, retire_reason: "改用叙述式" }));
+  assert.equal(retired.preference.status, "retired");
+  assert.equal((await readJson(root, "governance/change-log.json")).changes.length, 0, "偏好不应写入受控变更审计");
+  await compensate(root, retired.operation_id);
+  const restored = (await readJson(root, "memory/preferences.json")).preferences;
+  assert.equal(restored[0].status, "active");
+  assert.equal(restored[0].retire_reason, null);
+});
+
+test("an automatic preference supersession is undone as one unit", async () => {
+  const root = await workspace();
+  await recordOperation(root, operation("memory.preference.upsert", { scope: "communication", text: "对外邮件默认使用中文" }));
+  // 改写 text 在一次操作内退役旧条并新建后继，撤销必须同时回滚两者。
+  const revised = await recordOperation(root, operation("memory.preference.upsert", { id: "PREF-001", text: "对外邮件默认使用英文" }));
+  assert.equal(revised.preference.id, "PREF-002");
+  assert.equal((await readJson(root, "memory/preferences.json")).preferences.length, 2);
+
+  await compensate(root, revised.operation_id);
+  const preferences = (await readJson(root, "memory/preferences.json")).preferences;
+  assert.equal(preferences.length, 1);
+  assert.equal(preferences[0].id, "PREF-001");
+  assert.equal(preferences[0].status, "active");
+  assert.equal(preferences[0].superseded_by_id, null);
+  assert.match(await readFile(path.join(root, "memory/preferences.md"), "utf8"), /PREF-001/);
+});

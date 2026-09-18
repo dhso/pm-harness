@@ -100,7 +100,7 @@ pm-harness/
 ├── README.md                  本使用说明
 ├── project/                   项目定义、计划、需求、状态和登记册
 ├── knowledge/                 来源、待处理信息和精选 Wiki
-├── memory/                    跨会话工作记忆、事实、偏好和经验
+├── memory/                    跨会话工作记忆、协作偏好和演进证据
 ├── activity/                  按日期保存的实际工作记录
 ├── deliverables/              当前交付物、批准终稿和交付索引
 ├── governance/                有效规则、规则提案和变更记录
@@ -161,10 +161,17 @@ Wiki 只保存整理后的项目知识和必要引用，不复制整封邮件、
 | 路径 | 记录内容 |
 |---|---|
 | `memory/current.md` | 当前重点、阻塞、未决问题和下一步；通过 `memory.current.update` 保持短小并事务更新 |
-| `memory/facts.md` | 已确认、跨会话仍有价值的项目事实 |
-| `memory/preferences.md` | 你明确确认或反复体现的协作、写作和交付偏好 |
-| `memory/lessons.md` | 经复盘确认、适合在本项目复用的经验 |
+| `memory/preferences.json` | 你明确表达或复盘确认的协作、写作和交付偏好，是事实源 |
+| `memory/preferences.md` | 由 `preferences.json` 自动生成的可读视图，只展示生效偏好 |
 | `memory/observations.json` | 单次错误、纠正、异常和改进信号，是规则演进的证据池 |
+
+已确认的项目事实不放在这里：目标和范围在 `project/project.json`，干系人在 `project/stakeholders.json`，已确认决定在 `project/registers.json`，主题性知识在 `knowledge/`。复盘确认、值得长期遵守的经验走规则提案进 `governance/`，带复查日期，可以退役。
+
+偏好会随合作演进，不需要你反复确认：
+
+- 你说过的偏好会被直接记下，并在结果里回述记住了什么，说错可以当场撤销；
+- 后来改了主意，旧条自动退役、新条接手，回述会同时给出新旧两种表述，旧措辞留在 `preferences.json` 里可回溯；
+- 不再适用的偏好会连同原因一起退役，只是不再出现在生效清单上。
 
 不会把猜测、临时讨论、一次性措辞或完整对话直接固化为长期记忆。信息发生冲突时保留证据并请求确认，不用新内容静默覆盖旧事实。
 

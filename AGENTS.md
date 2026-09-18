@@ -4,7 +4,7 @@
 
 ## 进入项目
 
-1. 读取 `project/project.json`、`project/status.md` 和 `memory/current.md`。
+1. 读取 `project/project.json`、`project/status.md`、`memory/current.md` 和 `memory/preferences.md`。
 2. 按任务读取索引和 Wiki，不预载归档或整个知识库。查记录用 `node .harness/scripts/harness.mjs query <集合或ID> --compact`，不整读 JSON。
 3. 项目未初始化时使用 `pm-onboarding`；复杂或多步骤任务先用 `pm-task-guide` 梳理，再选择范围最窄的主 `workflow`，按产出需要加载 `capability`。
 4. 简单事实直接回答；复杂任务只澄清会改变结果的目标、受众、期限、证据和验收。
@@ -64,8 +64,11 @@
 - 仅在用户确认后记录发送、交付等活动或状态。
 - 原件留在 `archive/files/`，不混入结构化项目事实。
 - 记忆只保存已确认且跨会话有价值的信息；机械摘要不得覆盖人工整理。
+- 记忆分四层：`memory/current.md` 存当前重点，`memory/preferences.json` 存协作与交付偏好，`knowledge/` 存项目知识，`memory/observations.json` 与 `governance/` 存演进证据和规则。已确认的项目事实进结构化存储，不另开自由文档。
 
 摄取步骤按 `pm-source-intake` 执行；记忆只按 `.harness/references/evolution-policy.md` 分层。
+
+用户表达协作或交付偏好时用 `memory.preference.upsert` 记一条，并在结果中回述记住了什么，不为记一句话开审批流。改写已有偏好的 `text` 时 Harness 自动退役旧条并分配新 ID，旧措辞留在事实源里；写入前先 `query preference --where scope=<范围>`，发现语义重叠时合并成一条而不是并列堆叠。
 
 ## 时间、活动与交付
 
@@ -77,7 +80,7 @@
 
 产生或改变项目事实的重要 PM 任务完成后：
 
-1. 更新受影响的事实、Wiki、记忆、计划和交付物元数据；只记录结果、证据和下一步。
+1. 更新受影响的事实、Wiki、记忆、偏好、计划和交付物元数据；只记录结果、证据和下一步。
 2. 后台运行一次 `rebuild` 和 `lint --fast`；里程碑、交付物批准、归档变动或重复纠错后运行一次 `maintain`。
 3. 只修复安全的机械漂移；语义冲突、基线修复、规则启停和大范围知识变更交给用户。
 4. 用户纠正、返工、字段猜错或重复校验失败时，用 `observation.record` 记录并复用同类 `pattern_key`。
@@ -97,4 +100,4 @@
 
 ## 自我演进
 
-规则提案必须来自重复观察或确认的复盘结论，只有用户批准后才激活；流程见 `.harness/references/evolution-policy.md`。
+规则提案必须来自重复观察或确认的复盘结论，只有用户批准后才激活；不采纳时用 `rule.reject` 记录理由，不把提案长期挂在待批准队列里。已解决的观察用 `observation.record` 转 `resolved` 或 `dismissed` 关闭。流程见 `.harness/references/evolution-policy.md`。

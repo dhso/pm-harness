@@ -98,6 +98,23 @@ export async function addEnvironmentIssues(root, data, issues) {
     addIssue(issues, "error", "current_memory_missing", "memory/current.md", "Current memory file is missing");
   }
 
+  // 偏好只查条数与退役字段一致性，刻意不查过期：长期偏好没有"过期"语义，
+  // 过期类告警会逼着 agent 为消警告而编造记忆。
+  const preferences = data.preferences?.preferences || [];
+  const activePreferences = preferences.filter((item) => item.status === "active");
+  const preferenceBudget = Number(data.config.max_active_preferences || 40);
+  if (activePreferences.length > preferenceBudget) {
+    addIssue(issues, "warning", "preferences_over_budget", "memory/preferences.json", `${activePreferences.length} active preferences exceed the configured budget of ${preferenceBudget}; merge overlapping entries or retire ones that no longer apply`);
+  }
+  for (const item of preferences) {
+    if (item.status === "retired" && (!item.retired_at || !item.retire_reason)) {
+      addIssue(issues, "error", "preference_retirement_incomplete", "memory/preferences.json", `${item.id} is retired without a retirement time and reason`);
+    }
+    if (item.status === "active" && (item.retired_at || item.retire_reason)) {
+      addIssue(issues, "error", "preference_active_with_retirement", "memory/preferences.json", `${item.id} is active but carries retirement fields`);
+    }
+  }
+
   const statusPath = path.join(root, "project", "status.md");
   try {
     const status = await readFile(statusPath, "utf8");

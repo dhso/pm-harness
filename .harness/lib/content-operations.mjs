@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { assertTransition } from "./model.mjs";
 import { clone, digestFields, exactChange, isWorkspaceRelativePath, nextWorkspaceId, normalizeArray, replacementChange, safeWikiPath, sha256Path, upsert, validateOrThrow } from "./helpers.mjs";
-import { DELIVERABLE_CONTROLLED_FIELDS, DELIVERABLE_IMMUTABLE_FIELDS } from "./workspace.mjs";
+import { DELIVERABLE_CONTROLLED_FIELDS, DELIVERABLE_IMMUTABLE_FIELDS, PREFERENCE_SUPERSEDING_FIELDS } from "./workspace.mjs";
 import { addControlledChange, assertUserConfirmation, verifyApproval } from "./approval.mjs";
 
 export async function applyContentOperation({ root, envelope, data, now, changedStores, extraEntries, resultIds }) {
@@ -19,6 +19,58 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     extraEntries.push({ path: relativePath, content });
     resultIds.push(relativePath);
     return { document: { path: relativePath, bytes: Buffer.byteLength(content), updated_at: now } };
+  }
+  if (envelope.type === "memory.preference.upsert") {
+    const payload = envelope.payload;
+    const id = nextWorkspaceId(data, data.preferences.preferences, "preference", payload.id);
+    const existing = data.preferences.preferences.find((item) => item.id === id) || null;
+    if (existing?.status === "retired") {
+      throw new Error(JSON.stringify({ code: "preference_retired", id, fix: "该偏好已退役；提交新的 scope 与 text 让 Harness 分配新 ID，不要复活历史记录" }));
+    }
+    const sourceIds = normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids);
+    const record = {
+      ...existing,
+      ...payload,
+      id,
+      source_ids: sourceIds,
+      status: "active",
+      supersedes_id: existing?.supersedes_id ?? null,
+      superseded_by_id: null,
+      retired_at: null,
+      retire_reason: null,
+      created_at: existing?.created_at || payload.created_at || now,
+      updated_at: now,
+    };
+    // 改写 text 等于换掉用户说过的话：旧条退役留档、新条接手，而不是原地覆盖。
+    // 不设确认门——用户说了就是权威，agent 自己完成演进并在结果里回述即可。
+    const superseding = existing && digestFields(existing, PREFERENCE_SUPERSEDING_FIELDS) !== digestFields(record, PREFERENCE_SUPERSEDING_FIELDS);
+    if (superseding) {
+      const successorId = nextWorkspaceId(data, data.preferences.preferences, "preference");
+      Object.assign(existing, { status: "retired", retired_at: now, retire_reason: `由 ${successorId} 取代`, superseded_by_id: successorId, updated_at: now });
+      validateOrThrow("preference", existing);
+      const successor = { ...record, id: successorId, supersedes_id: existing.id, created_at: now };
+      validateOrThrow("preference", successor);
+      data.preferences.preferences.push(successor);
+      changedStores.add("preferences");
+      resultIds.push(existing.id, successor.id);
+      return { preference: successor, superseded: { id: existing.id, text: existing.text } };
+    }
+    validateOrThrow("preference", record);
+    upsert(data.preferences.preferences, record);
+    changedStores.add("preferences");
+    resultIds.push(record.id);
+    return { preference: record, created: !existing };
+  }
+  if (envelope.type === "memory.preference.retire") {
+    const record = data.preferences.preferences.find((item) => item.id === envelope.payload.id);
+    if (!record) throw new Error(JSON.stringify({ code: "preference_not_found", id: envelope.payload.id, fix: "用 query preference 确认现有偏好 ID" }));
+    if (record.status === "retired") throw new Error(JSON.stringify({ code: "preference_already_retired", id: record.id, retired_at: record.retired_at }));
+    assertTransition("preference", record.status, "retired", record.id);
+    Object.assign(record, { status: "retired", retired_at: now, retire_reason: envelope.payload.retire_reason, updated_at: now });
+    validateOrThrow("preference", record);
+    changedStores.add("preferences");
+    resultIds.push(record.id);
+    return { preference: record };
   }
   if (envelope.type === "inbox.transition") {
     const item = data.inbox.items.find((candidate) => candidate.id === envelope.payload.id);
@@ -96,9 +148,14 @@ export async function applyContentOperation({ root, envelope, data, now, changed
   }
   if (envelope.type === "observation.record") {
     const payload = envelope.payload;
-    const record = { id: nextWorkspaceId(data, data.observations.observations, "observation", payload.id), title: payload.title, pattern_key: payload.pattern_key, status: payload.status || "open", evidence: payload.evidence, suggested_rule: payload.suggested_rule ?? null, proposal_id: payload.proposal_id ?? null, created_at: payload.created_at || now, resolved_at: payload.resolved_at ?? null };
+    const id = nextWorkspaceId(data, data.observations.observations, "observation", payload.id);
+    const existing = data.observations.observations.find((item) => item.id === id) || null;
+    const status = payload.status || existing?.status || "open";
+    const closed = ["resolved", "dismissed"].includes(status);
+    const record = { id, title: payload.title ?? existing?.title, pattern_key: payload.pattern_key ?? existing?.pattern_key, status, evidence: payload.evidence ?? existing?.evidence, suggested_rule: payload.suggested_rule ?? existing?.suggested_rule ?? null, proposal_id: payload.proposal_id ?? existing?.proposal_id ?? null, created_at: existing?.created_at || payload.created_at || now, resolved_at: payload.resolved_at ?? (closed ? existing?.resolved_at || now : null) };
+    if (existing) assertTransition("observation", existing.status, record.status, record.id);
     validateOrThrow("observation", record);
-    data.observations.observations.push(record);
+    upsert(data.observations.observations, record);
     changedStores.add("observations");
     resultIds.push(record.id);
     return { observation: record };
@@ -133,6 +190,19 @@ export async function applyContentOperation({ root, envelope, data, now, changed
     addControlledChange(data, envelope, { kind: "rule_activation", target_ids: [rule.id], before, after: rule, before_summary: "proposed", after_summary: "active" });
     changedStores.add("proposals"); changedStores.add("rules"); changedStores.add("changes"); resultIds.push(rule.id);
     return { rule };
+  }
+  if (envelope.type === "rule.reject") {
+    assertUserConfirmation(envelope.approval, "rule rejection");
+    const proposal = data.proposals.proposals.find((item) => item.id === envelope.payload.id);
+    if (!proposal) throw new Error(JSON.stringify({ code: "proposal_not_found", id: envelope.payload.id, fix: "用 query proposal 确认待处置的提案 ID" }));
+    if (!["proposed", "approved"].includes(proposal.status)) throw new Error(JSON.stringify({ code: "proposal_not_rejectable", id: proposal.id, status: proposal.status, fix: "只有 proposed 或 approved 的提案可以驳回；已生效的规则请改用 rule.retire" }));
+    const before = clone(proposal);
+    assertTransition("proposal", proposal.status, "rejected", proposal.id);
+    Object.assign(proposal, { status: "rejected", disposition_reason: envelope.payload.reason });
+    validateOrThrow("proposal", proposal);
+    addControlledChange(data, envelope, { kind: "rule_rejection", target_ids: [proposal.id], before, after: proposal, before_summary: before.status, after_summary: "rejected" });
+    changedStores.add("proposals"); changedStores.add("changes"); resultIds.push(proposal.id);
+    return { proposal };
   }
   if (envelope.type === "rule.retire") {
     assertUserConfirmation(envelope.approval, "rule retirement");

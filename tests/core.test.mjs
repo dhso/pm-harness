@@ -1007,3 +1007,250 @@ test("approval guardrails return an actionable fix, not just an error code", asy
   assert.equal(missingRequest.code, "approved_change_request_required");
   assert.ok(missingRequest.fix.includes("change.propose"));
 });
+
+test("preferences record and evolve without approval, keeping every earlier wording", async () => {
+  const root = await workspace();
+  await initialize(root);
+
+  const created = await recordOperation(root, operation("memory.preference.upsert", { scope: "communication", text: "对外邮件默认使用中文" }));
+  assert.equal(created.preference.id, "PREF-001");
+  assert.equal(created.preference.status, "active");
+  assert.equal(created.created, true);
+  await rebuildWorkspace(root);
+  assert.match(await readFile(path.join(root, "memory/preferences.md"), "utf8"), /PREF-001.*对外邮件默认使用中文/);
+  assert.equal((await queryWorkspace(root, { id: "PREF-001" })).record.text, "对外邮件默认使用中文");
+
+  // 补来源、改分类都不动 text，原地更新即可。
+  const source = await recordOperation(root, operation("source.register", { type: "chat", title: "偏好来源", summary: "用户在对话中说明", items: [] }));
+  const enriched = await recordOperation(root, operation("memory.preference.upsert", { id: "PREF-001", source_ids: [source.source.id], scope: "collaboration" }));
+  assert.equal(enriched.created, false);
+  assert.equal(enriched.preference.id, "PREF-001", "分类调整不该产生新记录");
+  assert.equal(enriched.preference.scope, "collaboration");
+  assert.deepEqual(enriched.preference.source_ids, [source.source.id]);
+
+  // 重复陈述同一句话只刷新时间。
+  const restated = await recordOperation(root, operation("memory.preference.upsert", { id: "PREF-001", text: "对外邮件默认使用中文" }));
+  assert.equal(restated.preference.id, "PREF-001");
+  assert.equal(restated.superseded, undefined);
+
+  // 改写 text 无需审批：Harness 自动退役旧条、分配新 ID，并回报被取代的原文。
+  const revised = await recordOperation(root, operation("memory.preference.upsert", { id: "PREF-001", text: "对外邮件默认使用英文" }));
+  assert.equal(revised.preference.id, "PREF-002");
+  assert.equal(revised.preference.supersedes_id, "PREF-001");
+  assert.equal(revised.superseded.text, "对外邮件默认使用中文", "回述给用户时需要旧措辞");
+  assert.deepEqual(revised.target_ids, ["PREF-001", "PREF-002"]);
+
+  const stored = (await readJson(root, "memory/preferences.json")).preferences;
+  const old = stored.find((item) => item.id === "PREF-001");
+  assert.equal(old.status, "retired");
+  assert.equal(old.superseded_by_id, "PREF-002");
+  assert.equal(old.text, "对外邮件默认使用中文", "旧措辞必须留在事实源里");
+  assert.match(old.retire_reason, /PREF-002/);
+  assert.deepEqual(old.source_ids, [source.source.id], "被取代的条目保留自己的来源");
+
+  const view = await readFile(path.join(root, "memory/preferences.md"), "utf8");
+  assert.match(view, /PREF-002/);
+  assert.doesNotMatch(view, /PREF-001/);
+  assert.ok((await lintWorkspace(root)).ok);
+
+  // 退役同样无需审批，但必须说明原因；退役后不可复活。
+  const retired = await recordOperation(root, operation("memory.preference.retire", { id: "PREF-002", retire_reason: "改回逐次确认" }));
+  assert.equal(retired.preference.status, "retired");
+  assert.equal(JSON.parse((await rejection(recordOperation(root, operation("memory.preference.upsert", { id: "PREF-002", text: "任意新表述" })))).message).code, "preference_retired");
+  assert.equal(JSON.parse((await rejection(recordOperation(root, operation("memory.preference.retire", { id: "PREF-002", retire_reason: "再退一次" })))).message).code, "preference_already_retired");
+  assert.equal(JSON.parse((await rejection(recordOperation(root, operation("memory.preference.retire", { id: "PREF-404", retire_reason: "x" })))).message).code, "preference_not_found");
+  assert.ok((await lintWorkspace(root)).ok);
+});
+
+test("preference lifecycle fields stay under Harness control and remain undoable", async () => {
+  const root = await workspace();
+  await initialize(root);
+  await recordOperation(root, operation("memory.preference.upsert", { scope: "document", text: "周报用要点式" }));
+
+  // 生命周期字段不在契约内，agent 无法直接改状态或伪造替代链。
+  for (const payload of [{ id: "PREF-001", status: "retired" }, { id: "PREF-001", superseded_by_id: "PREF-002" }, { id: "PREF-001", retired_at: new Date().toISOString() }]) {
+    const refused = JSON.parse((await rejection(recordOperation(root, operation("memory.preference.upsert", payload)))).message);
+    assert.ok(refused.issues.some((item) => item.code === "unknown_field"), `${Object.keys(payload).join(",")} 应被契约拒绝`);
+  }
+
+  // scope 是自由分类：不预设的取值也能落库并进入生成视图。
+  const custom = await recordOperation(root, operation("memory.preference.upsert", { scope: "diagram", text: "流程图用竖向布局，关键路径加粗" }));
+  assert.equal(custom.preference.scope, "diagram");
+  await rebuildWorkspace(root);
+  const view = await readFile(path.join(root, "memory/preferences.md"), "utf8");
+  assert.match(view, /## diagram/);
+  assert.match(view, /流程图用竖向布局/);
+  assert.ok((await lintWorkspace(root)).ok);
+});
+
+test("preference lint flags inconsistent retirement fields and an over-budget active set", async () => {
+  const root = await workspace();
+  await initialize(root);
+  await recordOperation(root, operation("memory.preference.upsert", { scope: "document", text: "周报用要点式" }));
+
+  const store = await readJson(root, "memory/preferences.json");
+  const [first] = store.preferences;
+  await writeJsonFixture(root, "memory/preferences.json", { ...store, preferences: [{ ...first, status: "retired", retired_at: null, retire_reason: null }] });
+  assert.ok((await lintWorkspace(root)).issues.some((item) => item.code === "preference_retirement_incomplete"));
+
+  await writeJsonFixture(root, "memory/preferences.json", { ...store, preferences: [{ ...first, retire_reason: "已退役但仍标记生效" }] });
+  assert.ok((await lintWorkspace(root)).issues.some((item) => item.code === "preference_active_with_retirement"));
+
+  const many = Array.from({ length: 41 }, (_, index) => ({ ...first, id: `PREF-${String(index + 1).padStart(3, "0")}`, text: `偏好 ${index + 1}` }));
+  await writeJsonFixture(root, "memory/preferences.json", { ...store, preferences: many });
+  const budget = (await lintWorkspace(root)).issues.find((item) => item.code === "preferences_over_budget");
+  assert.equal(budget.level, "warning", "超预算只提示合并，不阻断写入");
+  // 条数没超时不应有任何偏好告警，避免 agent 为消警告而编造记忆。
+  await writeJsonFixture(root, "memory/preferences.json", { ...store, preferences: many.slice(0, 40) });
+  assert.ok(!(await lintWorkspace(root)).issues.some((item) => item.code.startsWith("preference")));
+});
+
+test("rejecting a proposal clears the approval queue without activating a rule", async () => {
+  const root = await workspace();
+  await initialize(root);
+  const proposed = await recordOperation(root, operation("rule.propose", {
+    title: "复盘：发送前复核收件人",
+    manual_reason: "复盘确认的可复用经验",
+    proposed_rule: "对外邮件发送前复核收件人",
+    scope: "communication",
+    expected_benefit: "减少误发",
+    possible_side_effects: "多一次检查",
+    evaluation_metric: "误发次数",
+    review_at: "2026-12-31",
+  }));
+  const proposalId = proposed.proposal.id;
+  assert.ok((await buildDailyBrief(root)).pending_approvals.some((item) => item.kind === "rule" && item.id === proposalId));
+
+  await assert.rejects(recordOperation(root, operation("rule.reject", { id: proposalId, reason: "暂不需要" })), /user_confirmation_required/);
+  const rejected = await recordOperation(root, operation("rule.reject", { id: proposalId, reason: "现有流程已足够" }, { approval: { confirmed_by_user_at: new Date().toISOString() } }));
+  assert.equal(rejected.proposal.status, "rejected");
+  assert.equal(rejected.proposal.disposition_reason, "现有流程已足够");
+
+  assert.deepEqual((await buildDailyBrief(root)).pending_approvals, [], "驳回后提案不应再常驻待批准队列");
+  assert.equal((await readJson(root, "governance/rules.json")).rules.length, 0);
+  assert.match(await readFile(path.join(root, "governance/rules.md"), "utf8"), /暂无项目级演进规则/);
+  // rejected 是终态：不能再驳回，也不能激活。
+  assert.equal(JSON.parse((await rejection(recordOperation(root, operation("rule.reject", { id: proposalId, reason: "再驳一次" }, { approval: { confirmed_by_user_at: new Date().toISOString() } })))).message).code, "proposal_not_rejectable");
+  await assert.rejects(recordOperation(root, operation("rule.activate", { id: proposalId }, { approval: { confirmed_by_user_at: new Date().toISOString() } })), /cannot be activated/);
+  assert.ok((await lintWorkspace(root)).ok);
+});
+
+test("an observation can be closed in place instead of accumulating duplicates", async () => {
+  const root = await workspace();
+  await initialize(root);
+  const recorded = await recordOperation(root, operation("observation.record", { title: "字段猜错", pattern_key: "contract_guess", evidence: "两次写入失败" }));
+  const id = recorded.observation.id;
+  assert.equal(recorded.observation.status, "open");
+  assert.equal(recorded.observation.resolved_at, null);
+
+  // 关闭时不必重复提供标题、pattern_key 和证据。
+  const resolved = await recordOperation(root, operation("observation.record", { id, status: "resolved" }));
+  assert.equal(resolved.observation.status, "resolved");
+  assert.equal(resolved.observation.title, "字段猜错");
+  assert.ok(resolved.observation.resolved_at, "关闭时应自动补上解决时间");
+  assert.equal((await readJson(root, "memory/observations.json")).observations.length, 1, "同一 id 不应产生第二条记录");
+  assert.ok((await lintWorkspace(root)).ok);
+
+  const reopened = JSON.parse((await rejection(recordOperation(root, operation("observation.record", { id, status: "open" })))).message);
+  assert.equal(reopened.code, "invalid_transition");
+  assert.equal(reopened.from, "resolved");
+
+  // 新建路径仍然要求完整证据。
+  const incomplete = JSON.parse((await rejection(recordOperation(root, operation("observation.record", { pattern_key: "contract_guess" })))).message);
+  assert.equal(incomplete.code, "record_validation_failed");
+  assert.deepEqual(incomplete.issues.map((item) => item.field).sort(), ["evidence", "title"]);
+});
+
+test("the new template treats a missing preference store as an integrity error", async () => {
+  const root = await workspace();
+  await initialize(root);
+  await unlink(path.join(root, "memory/preferences.json"));
+
+  const lint = await lintWorkspace(root);
+  const issue = lint.issues.find((item) => item.path === "memory/preferences.json");
+  assert.equal(issue.code, "store_missing");
+  assert.ok(issue.fix.includes("Restore memory/preferences.json"));
+
+  for (const action of [
+    () => queryWorkspace(root, { target: "preference" }),
+    () => recordOperation(root, operation("activity.record", { action: "验证完整性", outcome: "不应写入" })),
+    () => rebuildWorkspace(root),
+  ]) {
+    const error = JSON.parse((await rejection(action())).message);
+    assert.equal(error.code, "store_missing");
+    assert.equal(error.path, "memory/preferences.json");
+  }
+});
+
+test("maintain surfaces pending proposals so no proposal sits in the queue unnoticed", async () => {
+  const root = await workspace();
+  await initialize(root);
+  const proposed = await recordOperation(root, operation("rule.propose", {
+    title: "复盘：发送前复核收件人",
+    manual_reason: "复盘确认的可复用经验",
+    proposed_rule: "对外邮件发送前复核收件人",
+    scope: "communication",
+    expected_benefit: "减少误发",
+    possible_side_effects: "多一次检查",
+    evaluation_metric: "误发次数",
+    review_at: "2026-12-31",
+  }));
+
+  const report = await maintainWorkspace(root);
+  assert.equal(report.pending_proposals.length, 1);
+  const [pending] = report.pending_proposals;
+  assert.equal(pending.id, proposed.proposal.id);
+  assert.equal(pending.status, "proposed");
+  assert.equal(pending.evidence_count, 0, "manual_reason 立项的提案没有观察证据");
+  assert.equal(pending.manual_reason, "复盘确认的可复用经验");
+  assert.equal(pending.overdue, false);
+  assert.equal(report.pending_proposals_complete, true);
+
+  // 处置理由由 rule.reject 独占：创建时预填会被契约拒绝，而不是静默丢弃。
+  const prefilled = JSON.parse((await rejection(recordOperation(root, operation("rule.propose", {
+    title: "预填处置理由",
+    manual_reason: "复盘",
+    proposed_rule: "pr",
+    scope: "communication",
+    expected_benefit: "b",
+    possible_side_effects: "e",
+    evaluation_metric: "m",
+    review_at: "2026-12-31",
+    disposition_reason: "提前写好的驳回理由",
+  })))).message);
+  assert.ok(prefilled.issues.some((item) => item.code === "unknown_field" && item.field === "payload.disposition_reason"));
+
+  // 无关事实有 lint 错误时 maintain 停止写入，但仍应报告可安全读取的待处置提案。
+  const registers = await readJson(root, "project/registers.json");
+  await writeJsonFixture(root, "project/registers.json", { ...registers, risks: [{ id: "RISK-001" }] });
+  const stopped = await maintainWorkspace(root);
+  assert.equal(stopped.stopped_before_changes, true);
+  assert.equal(stopped.pending_proposals_complete, true);
+  assert.deepEqual(stopped.pending_proposals.map((item) => item.id), [proposed.proposal.id], "无关 lint 错误不应隐藏待处置提案");
+
+  // 提案集合本身损坏时不能谎报“没有提案”，必须明确标记发现结果不完整。
+  await writeJsonFixture(root, "project/registers.json", registers);
+  const proposals = await readJson(root, "governance/proposals.json");
+  await writeJsonFixture(root, "governance/proposals.json", { ...proposals, proposals: [{ id: proposed.proposal.id }] });
+  const unavailable = await maintainWorkspace(root);
+  assert.equal(unavailable.stopped_before_changes, true);
+  assert.equal(unavailable.pending_proposals_complete, false);
+  assert.deepEqual(unavailable.pending_proposals, []);
+
+  // 恢复事实源并处置后必须离开发现入口，否则 maintain 会一直重复提示同一条。
+  await writeJsonFixture(root, "governance/proposals.json", proposals);
+  await recordOperation(root, operation("rule.reject", { id: proposed.proposal.id, reason: "现有流程已足够" }, { approval: { confirmed_by_user_at: new Date().toISOString() } }));
+  const disposed = await maintainWorkspace(root);
+  assert.equal(disposed.pending_proposals_complete, true);
+  assert.deepEqual(disposed.pending_proposals, []);
+});
+
+test("preferences must reference registered sources", async () => {
+  const root = await workspace();
+  await initialize(root);
+  await recordOperation(root, operation("memory.preference.upsert", { scope: "document", text: "周报用要点式" }));
+  const store = await readJson(root, "memory/preferences.json");
+  await writeJsonFixture(root, "memory/preferences.json", { ...store, preferences: [{ ...store.preferences[0], source_ids: ["SRC-999"] }] });
+  const issue = (await lintWorkspace(root)).issues.find((item) => item.path === "memory/preferences.json");
+  assert.equal(issue.code, "missing_reference");
+});

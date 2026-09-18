@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { daysBetween, escapeTable, localDate, mermaidText, text } from "./helpers.mjs";
+import { PREFERENCE_SCOPES } from "./model.mjs";
 import { readWorkspace } from "./workspace.mjs";
 import { commitTransaction, withWorkspaceLock } from "./transaction.mjs";
 
@@ -11,6 +12,14 @@ function taskVisualStatus(task) {
   if (task.status === "blocked") return "crit";
   return "";
 }
+
+const PREFERENCE_SCOPE_LABELS = Object.freeze({
+  communication: "沟通",
+  document: "文档与交付",
+  schedule: "时间与节奏",
+  collaboration: "协作方式",
+  tooling: "工具与格式",
+});
 
 const STATUS_LABELS = Object.freeze({
   not_started: "未开始",
@@ -87,6 +96,24 @@ export function renderKnowledgeIndex(catalog) {
   return `${lines.join("\n")}\n`;
 }
 
+export function renderPreferences(preferences) {
+  const active = (preferences.preferences || []).filter((item) => item.status === "active");
+  const lines = ["# 协作与交付偏好", "", "> 由 `memory/preferences.json` 自动生成。请勿直接编辑本文件。只展示生效偏好；被取代和已退役的条目保留在 JSON 中以备回溯。", ""];
+  // scope 是自由分类：常用范围按固定顺序在前，其余按字母序跟随，不因为没预设就丢掉。
+  const scopes = [...new Set(active.map((item) => item.scope))]
+    .sort((left, right) => {
+      const rank = (value) => (PREFERENCE_SCOPES.indexOf(value) + 1 || PREFERENCE_SCOPES.length + 1);
+      return rank(left) - rank(right) || left.localeCompare(right);
+    });
+  for (const scope of scopes) {
+    lines.push(`## ${PREFERENCE_SCOPE_LABELS[scope] || scope}`, "");
+    for (const item of active.filter((item) => item.scope === scope)) lines.push(`- **${item.id}**：${item.text}`);
+    lines.push("");
+  }
+  if (!active.length) lines.push("暂无已确认偏好。", "");
+  return `${lines.join("\n")}\n`;
+}
+
 export function renderRules(rules) {
   const active = (rules.rules || []).filter((item) => item.status === "active");
   const lines = ["# 项目级有效规则", "", "> 由 `governance/rules.json` 自动生成。内置安全护栏位于 `AGENTS.md` 和 `.harness/references/`，此处只展示经用户批准的项目级演进规则。", ""];
@@ -133,6 +160,7 @@ export async function generatedEntries(root, data, { pruneActivity = true } = {}
     { path: "project/gantt.md", content: renderGantt(data.project, data.schedule) },
     { path: "deliverables/index.md", content: renderDeliverablesIndex(data.deliverables) },
     { path: "knowledge/index.md", content: renderKnowledgeIndex(data.catalog) },
+    { path: "memory/preferences.md", content: renderPreferences(data.preferences) },
     { path: "governance/rules.md", content: renderRules(data.rules) },
     { path: "activity/index.md", content: renderActivityIndex(data.activity, timezone) },
   ];

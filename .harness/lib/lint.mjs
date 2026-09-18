@@ -30,7 +30,7 @@ import {
   REQUIREMENT_IMMUTABLE_FIELDS,
   REQUIREMENT_LEGACY_IMMUTABLE_FIELDS,
   STORE_FILES,
-  readJson,
+  readStore,
 } from "./workspace.mjs";
 import { generatedEntries } from "./views.mjs";
 import { addEnvironmentIssues } from "./environment.mjs";
@@ -141,7 +141,7 @@ export async function collectIssues(root, data, options = {}) {
   if (!STATUS.project.includes(data.project.status)) addIssue(issues, "error", "invalid_status", STORE_FILES.project, `Unsupported project status: ${data.project.status}`);
   if (!validTimezone(data.project.timezone || data.config.default_timezone)) addIssue(issues, "error", "invalid_timezone", STORE_FILES.project, "Project/default timezone must be a valid IANA timezone");
   if (!validTimezone(data.config.default_timezone)) addIssue(issues, "error", "invalid_timezone", STORE_FILES.config, "default_timezone must be a valid IANA timezone");
-  for (const field of ["upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days"]) {
+  for (const field of ["upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "max_active_preferences"]) {
     if (!Number.isFinite(data.config[field]) || data.config[field] <= 0) addIssue(issues, "error", "invalid_config", STORE_FILES.config, `${field} must be a positive number`);
   }
   if (data.project.initialized) {
@@ -346,6 +346,17 @@ export async function collectIssues(root, data, options = {}) {
     }
   }
 
+  const preferenceIds = ids("preference");
+  for (const item of byKind.preference || []) {
+    validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.preferences);
+    for (const field of ["supersedes_id", "superseded_by_id"]) {
+      if (item[field] && !preferenceIds.has(item[field])) addIssue(issues, "error", "invalid_supersession", STORE_FILES.preferences, `${item.id} references missing preference ${item[field]}`);
+    }
+    const successor = item.superseded_by_id ? (byKind.preference || []).find((candidate) => candidate.id === item.superseded_by_id) : null;
+    if (successor && successor.supersedes_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.preferences, `${item.id} replacement link is not reciprocal`);
+    if (item.superseded_by_id && item.status !== "retired") addIssue(issues, "error", "superseded_preference_active", STORE_FILES.preferences, `${item.id} was superseded but is still active`);
+  }
+
   for (const item of byKind.observation || []) {
     if (item.proposal_id && !proposalIds.has(item.proposal_id)) addIssue(issues, "error", "missing_proposal", STORE_FILES.observations, `${item.id} references missing proposal ${item.proposal_id}`);
     const proposal = item.proposal_id ? (byKind.proposal || []).find((candidate) => candidate.id === item.proposal_id) : null;
@@ -360,8 +371,9 @@ export async function collectIssues(root, data, options = {}) {
   for (const [pattern, items] of groups) if (items.length >= Number(data.config.repeat_observation_threshold || 2)) addIssue(issues, "info", "rule_candidate", STORE_FILES.observations, `${items.length} observations share pattern '${pattern}'`);
   for (const item of byKind.proposal || []) {
     validateRefs(issues, item, "observation_ids", observationIds, STORE_FILES.proposals);
-    if (!item.observation_ids.length && !item.manual_reason) addIssue(issues, "error", "rule_evidence_missing", STORE_FILES.proposals, `${item.id} has neither observations nor a manual reason`);
-    for (const observationId of item.observation_ids) {
+    const linkedObservationIds = Array.isArray(item.observation_ids) ? item.observation_ids : [];
+    if (!linkedObservationIds.length && !item.manual_reason) addIssue(issues, "error", "rule_evidence_missing", STORE_FILES.proposals, `${item.id} has neither observations nor a manual reason`);
+    for (const observationId of linkedObservationIds) {
       const observation = (byKind.observation || []).find((candidate) => candidate.id === observationId);
       if (observation && observation.proposal_id !== item.id) addIssue(issues, "error", "proposal_observation_link_mismatch", STORE_FILES.proposals, `${item.id} lists ${observationId}, but the observation points elsewhere`);
     }
@@ -457,7 +469,7 @@ export async function lintWorkspace(root, { fast = false } = {}) {
   const issues = [];
   for (const [key, relative] of Object.entries(STORE_FILES)) {
     try {
-      data[key] = await readJson(root, relative);
+      data[key] = await readStore(root, key);
     } catch (error) {
       let details;
       try { details = JSON.parse(error.message); } catch { details = null; }

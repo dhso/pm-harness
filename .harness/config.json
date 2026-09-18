@@ -10,5 +10,6 @@
   "memory_current_max_bytes": 4096,
   "status_max_bytes": 8192,
   "memory_current_stale_days": 14,
+  "max_active_preferences": 40,
   "verify_archive_hash_on_lint": true
 }

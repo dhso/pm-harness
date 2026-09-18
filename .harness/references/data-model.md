@@ -15,6 +15,7 @@
 | Wiki | `WIKI-###` | `knowledge/catalog.json` |
 | 活动 | `ACT-###` | `activity/log.json` |
 | 交付物 | `DEL-###` | `deliverables/index.json` |
+| 偏好 | `PREF-###` | `memory/preferences.json` |
 | 观察 / 规则 | `OBS-###` / `RULE-###` | `memory/observations.json` / `governance/*.json` |
 | 受控变更 / 归档 | `CHG-###` / `ARC-###` | `governance/change-log.json` / `archive/index.json` |
 
@@ -45,6 +46,9 @@ ID 一经分配不得复用；标题或路径变化不改变 ID。规则与其�
 - `needs_confirmation | archived | rejected` 必须保留 `disposition_reason`。
 - Wiki 只能位于 `knowledge/wiki/*.md`，必须登记来源、关联对象、最近复查与下次复查；页面和目录相互校验。
 - `memory/current.md` 必须保留“当前重点、待确认、下一步”和 ISO 更新时间，并受配置的大小上限约束。
+- 偏好的 `text` 不会被原地覆盖：提交同一个 ID 的新 `text` 时，Harness 自动退役旧条、分配新 ID 并建立 `supersedes_id` / `superseded_by_id` 互指；`scope` 只是分类，原地更新。
+- `retired` 偏好必须同时有 `retired_at` 和 `retire_reason`；`active` 偏好不得携带这两个字段，也不得已被取代。
+- `memory/preferences.md` 与其他索引一样是生成视图，不得手改；活跃偏好数受 `max_active_preferences` 约束。
 - 机械代码只检查记忆结构，不覆盖人工确认的语义内容。
 
 ## 受控变更

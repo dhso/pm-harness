@@ -54,6 +54,21 @@ export const OPERATION_SPECS = Object.freeze({
     required: ["content"],
     note: "以事务方式更新短期工作记忆；内容受配置大小上限约束。",
   },
+  // status、退役与替代链字段不进契约：生命周期由 Harness 维护，避免 agent 直接改写状态。
+  "memory.preference.upsert": {
+    fields: Object.fromEntries(Object.entries(fieldTypes("preference")).filter(([field]) => !["status", "supersedes_id", "superseded_by_id", "retired_at", "retire_reason"].includes(field))),
+    create_required: ["scope", "text"],
+    update_required: ["id"],
+    defaults: ["id", "source_ids", "created_at"],
+    status_kinds: ["preference"],
+    note: "记录用户表达或复盘确认的协作与交付偏好，一次一条。无需审批：改写已有条目的 text 时 Harness 自动退役旧条并分配新 ID，返回的 superseded 给出被取代的原文，据此向用户回述。scope 是自由分类，常用 communication、document、schedule、collaboration、tooling。",
+  },
+  "memory.preference.retire": {
+    fields: { id: "string", retire_reason: "string" },
+    required: ["id", "retire_reason"],
+    status_kinds: ["preference"],
+    note: "退役不再适用的偏好，并说明原因。退役记录保留在 memory/preferences.json 中以备回溯，只是不进生成视图。",
+  },
   "stakeholder.upsert": { fields: fieldTypes("stakeholder"), create_required: ["name", "role"], update_required: ["id"], status_kinds: ["stakeholder"] },
   "source.register": {
     fields: { ...fieldTypes("source"), raw_path: "workspacePath", archive_reason: "string", items: "inboxItemArray" },
@@ -143,12 +158,14 @@ export const OPERATION_SPECS = Object.freeze({
   },
   "observation.record": {
     fields: fieldTypes("observation"),
-    required: ["title", "pattern_key", "evidence"],
+    create_required: ["title", "pattern_key", "evidence"],
+    update_required: ["id"],
     defaults: ["id", "status", "created_at"],
     status_kinds: ["observation"],
+    note: "新建观察需要标题、pattern_key 和证据；带已有 id 时按更新合并，可将状态转为 resolved 或 dismissed 以关闭观察。",
   },
   "rule.propose": {
-    fields: Object.fromEntries(Object.entries(fieldTypes("proposal")).filter(([field]) => !["status", "approved_by", "approved_at", "effective_at"].includes(field))),
+    fields: Object.fromEntries(Object.entries(fieldTypes("proposal")).filter(([field]) => !["status", "approved_by", "approved_at", "effective_at", "disposition_reason"].includes(field))),
     required: ["title", "proposed_rule", "scope", "expected_benefit", "possible_side_effects", "evaluation_metric", "review_at"],
     one_of: [["observation_ids", "manual_reason"]],
     defaults: ["id", "observation_ids"],
@@ -156,6 +173,7 @@ export const OPERATION_SPECS = Object.freeze({
     note: "必须关联 observation_ids，或提供 manual_reason。",
   },
   "rule.activate": { fields: { id: "string" }, required: ["id"], status_kinds: ["proposal"], note: "必须由用户明确确认。" },
+  "rule.reject": { fields: { id: "string", reason: "string" }, required: ["id", "reason"], status_kinds: ["proposal"], note: "驳回不采纳的规则提案；必须由用户明确确认，理由写入 disposition_reason。驳回后提案离开待批准队列，不再重复提示。" },
   "rule.retire": { fields: { id: "string" }, required: ["id"], status_kinds: ["rule"], note: "必须由用户明确确认。" },
   "operation.compensate": { fields: { operation_id: "string" }, required: ["operation_id"], note: "实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和人工维护的文档不可直接补偿，状态与当前记忆摘要可以事务撤销。" },
   "workflow.apply": { fields: { kind: "string", operations: "operationArray" }, required: ["kind", "operations"], note: "operations 按依赖顺序排列；不支持嵌套工作流。" },
@@ -203,7 +221,7 @@ export const COMPOSITE_TYPES = Object.freeze({
 });
 const ACTOR_FIELDS = new Set(["kind", "id", "name"]);
 const STORE_SHAPES = Object.freeze({
-  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "verify_archive_hash_on_lint"]],
+  config: [".harness/config.json", ["schema_version", "default_timezone", "upcoming_days", "recent_activity_days", "stale_task_days", "large_tracked_file_mb", "repeat_observation_threshold", "rule_review_days", "memory_current_max_bytes", "status_max_bytes", "memory_current_stale_days", "max_active_preferences", "verify_archive_hash_on_lint"]],
   project: ["project/project.json", ["schema_version", "initialized", "id", "name", "status", "timezone", "objective", "scope_in", "scope_out", "success_criteria", "constraints", "budget", "created_at", "updated_at"]],
   stakeholders: ["project/stakeholders.json", ["schema_version", "stakeholders"]],
   schedule: ["project/schedule.json", ["schema_version", "baseline", "milestones", "tasks"]],
@@ -212,6 +230,7 @@ const STORE_SHAPES = Object.freeze({
   sources: ["knowledge/sources.json", ["schema_version", "sources"]],
   inbox: ["knowledge/inbox.json", ["schema_version", "items"]],
   catalog: ["knowledge/catalog.json", ["schema_version", "pages"]],
+  preferences: ["memory/preferences.json", ["schema_version", "preferences"]],
   observations: ["memory/observations.json", ["schema_version", "observations"]],
   activity: ["activity/log.json", ["schema_version", "entries"]],
   deliverables: ["deliverables/index.json", ["schema_version", "deliverables"]],

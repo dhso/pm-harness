@@ -1,5 +1,5 @@
 // 按 ID 或过滤条件只读取目标事实源，并只返回调用方需要的记录和字段。
-import { COLLECTIONS, readJson, STORE_FILES } from "./workspace.mjs";
+import { COLLECTIONS, readStore } from "./workspace.mjs";
 import { nearestName, RECORD_MODELS } from "./model.mjs";
 
 // 查询别名 -> [store, collection]。单数与复数都接受。
@@ -31,6 +31,7 @@ const ID_PREFIX_KIND = Object.freeze({
   ACT: "activity",
   DEL: "deliverable",
   WIKI: "wiki",
+  PREF: "preference",
   OBS: "observation",
   RULE: "rule",
   CHG: "change",
@@ -82,7 +83,7 @@ export async function queryWorkspace(root, { target, id, filters = {}, fields = 
   }
 
   if (!Number.isInteger(limit) || limit < 0) throw new Error(JSON.stringify({ code: "invalid_limit", limit, fix: "Use a non-negative integer" }));
-  const storeData = await readJson(root, STORE_FILES[resolved.store]);
+  const storeData = await readStore(root, resolved.store);
   const records = resolved.singleton ? [storeData] : storeData?.[resolved.collection] || [];
   const supported = resolved.singleton
     ? new Set(Object.keys(storeData))

@@ -82,7 +82,7 @@ node .harness/scripts/harness.mjs undo <operation_id> --confirmed-at <ISO-8601>
 - `brief` 提供近期活动和不超过三个带原因的首要行动，不把完整 JSON 原样转给用户。
 - `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
 - `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照，并提示任务沙箱根目录中残留的依赖环境或包管理器缓存。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
-- `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。
+- `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。返回的 `pending_proposals` 是待处置规则提案的唯一发现入口（含证据条数与 `overdue`），`pending_proposals_complete` 表示本次发现是否完整；为 `false` 时不得把空数组解释为没有提案。`rule_reviews_due` 给出到期规则的保留/收窄/退役建议；两者都只报告事实，处置须由用户决定。
 - `status.update` 和 `memory.current.update` 用事务更新人读摘要；不要在事实 JSON 已提交后再用非事务方式覆盖这两个文件。
 - `lint` 会提示过大的结构化 Store。读取优先使用 `query --fields ... --limit ...`，不要把完整 JSON 复制进对话；压缩或归档必须保留事实、ID 和审计可追溯性。
 - `undo` 通过追加 `operation.compensate` 撤销最近一次可撤销写入，原操作始终保留。先用 `--dry-run` 展示将恢复或移除的事实及保留的归档原件；取得用户确认后用 `--confirmed-at` 传入确认发生的 ISO 8601 时间。实际执行缺少确认时间会被机器拒绝。受控变更、非最近有效操作、旧操作缺少补偿快照、目标发生后续冲突或操作写入人工文档内容时也会拒绝，按 `code` 和 `fix` 处理。原始归档不会被删除，结果中的 `retained_paths` 会明确列出。

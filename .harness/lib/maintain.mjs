@@ -1,20 +1,48 @@
-import { addDays, clone, localDate, nextWorkspaceId, validateOrThrow } from "./helpers.mjs";
-import { digestValue } from "./model.mjs";
+import { addDays, clone, localDate, nextWorkspaceId, validTimezone, validateOrThrow } from "./helpers.mjs";
+import { digestValue, validateRecord } from "./model.mjs";
 import { STORE_FILES, readWorkspace } from "./workspace.mjs";
 import { lintWorkspace } from "./lint.mjs";
 import { generatedEntries, rebuildWorkspace } from "./views.mjs";
 import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.mjs";
 import { captureCompensation } from "./compensation.mjs";
 
+function pendingProposalSummary(data, today) {
+  const proposals = data.proposals?.proposals;
+  if (!Array.isArray(proposals)) return { items: [], complete: false };
+  const complete = proposals.every((item) => validateRecord("proposal", item).length === 0);
+  const items = proposals
+    .filter((item) => ["proposed", "approved"].includes(item?.status))
+    .map((item) => {
+      const reviewAt = typeof item.review_at === "string" ? item.review_at : null;
+      return {
+        id: item.id,
+        title: item.title,
+        status: item.status,
+        pattern_key: item.pattern_key,
+        evidence_count: Array.isArray(item.observation_ids) ? item.observation_ids.length : 0,
+        manual_reason: item.manual_reason,
+        review_at: reviewAt,
+        // 提案没有 created_at，所以用它自己排定的复查日期判断是否搁置过久。
+        // 非法日期留给 lint 报错；发现结果用 null 表示当前无法判断。
+        overdue: reviewAt ? reviewAt.slice(0, 10) <= today : null,
+      };
+    });
+  return { items, complete };
+}
+
 export async function maintainWorkspace(root, options = {}) {
   if (!options.lockHeld) return withWorkspaceLock(root, () => maintainWorkspace(root, { ...options, lockHeld: true }));
   await rebuildWorkspace(root, { lockHeld: true });
   const initialLint = await lintWorkspace(root);
-  if (!initialLint.ok) return { ok: false, proposals_created: [], observations_linked: [], rule_reviews_due: [], stopped_before_changes: true, lint: initialLint };
   const data = await readWorkspace(root);
+  const configuredTimezone = data.project.timezone || data.config.default_timezone || "UTC";
+  const today = localDate(validTimezone(configuredTimezone) ? configuredTimezone : "UTC");
+  const initialPending = pendingProposalSummary(data, today);
+  // 有 lint 错误时停止写入，但继续报告仍可安全读取的待处置提案。
+  // 若提案集合自身损坏，complete=false 明确表示“未知”，不能把空数组解释为没有提案。
+  if (!initialLint.ok) return { ok: false, proposals_created: [], observations_linked: [], pending_proposals: initialPending.items, pending_proposals_complete: initialPending.complete, rule_reviews_due: [], stopped_before_changes: true, lint: initialLint };
   const beforeState = clone(data);
   const threshold = Number(data.config.repeat_observation_threshold || 2);
-  const today = localDate(data.project.timezone || data.config.default_timezone || "UTC");
   const groups = new Map();
   for (const item of data.observations.observations || []) {
     if (item.status !== "open" || item.proposal_id) continue;
@@ -74,5 +102,8 @@ export async function maintainWorkspace(root, options = {}) {
     const recurrenceCount = item.pattern_key ? (refreshed.observations.observations || []).filter((observation) => observation.pattern_key === item.pattern_key && observation.created_at >= item.effective_at).length : null;
     return { id: item.id, pattern_key: item.pattern_key, recurrence_count: recurrenceCount, recommendation: recurrenceCount === 0 ? "keep" : recurrenceCount === null ? "review_manually" : recurrenceCount === 1 ? "narrow_or_keep" : "revise_or_retire" };
   });
-  return { ok: lint.ok, proposals_created: created, observations_linked: linked, rule_reviews_due: rulesDue, initial_lint: initialLint, lint };
+  // 待处置提案必须有发现入口：否则提案生成后无人问津，长期占着待批准队列。
+  // 只报告事实和证据强度，不代替用户决定激活还是驳回。
+  const pending = pendingProposalSummary(refreshed, today);
+  return { ok: lint.ok, proposals_created: created, observations_linked: linked, pending_proposals: pending.items, pending_proposals_complete: pending.complete, rule_reviews_due: rulesDue, initial_lint: initialLint, lint };
 }

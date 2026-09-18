@@ -14,4 +14,8 @@ metadata:
 
 复盘时使用 `templates/retrospective.md`。比较基线、预测、实际结果、需求变化、风险、决定、交付证据和活动。区分可复用的流程经验与一次性情况。
 
-记录后续任务和长期经验。将 Harness 失败或重复纠正记录为观察，不要直接创建生效规则。
+记录后续任务和长期经验：
+
+- 值得长期遵守的流程经验用 `rule.propose` 立项，尚无重复观察时用 `manual_reason` 说明复盘依据，并给出复查日期；用户批准后才 `rule.activate`，不采纳时用 `rule.reject` 记录理由。
+- 纯协作或交付习惯用 `memory.preference.upsert` 记录。
+- 将 Harness 失败或重复纠正记录为观察，不要直接创建生效规则；已解决的观察转为 `resolved` 或 `dismissed`。

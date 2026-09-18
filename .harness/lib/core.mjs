@@ -7,6 +7,7 @@ export {
   renderDeliverablesIndex,
   renderGantt,
   renderKnowledgeIndex,
+  renderPreferences,
   renderRules,
 } from "./views.mjs";
 export { lintWorkspace } from "./lint.mjs";

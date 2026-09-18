@@ -11,6 +11,7 @@ export const STORE_FILES = Object.freeze({
   sources: "knowledge/sources.json",
   inbox: "knowledge/inbox.json",
   catalog: "knowledge/catalog.json",
+  preferences: "memory/preferences.json",
   observations: "memory/observations.json",
   activity: "activity/log.json",
   deliverables: "deliverables/index.json",
@@ -32,6 +33,7 @@ export const COLLECTIONS = Object.freeze([
   ["sources", "sources", "source"],
   ["inbox", "items", "inbox"],
   ["catalog", "pages", "wiki"],
+  ["preferences", "preferences", "preference"],
   ["observations", "observations", "observation"],
   ["activity", "entries", "activity"],
   ["deliverables", "deliverables", "deliverable"],
@@ -46,6 +48,9 @@ export const REQUIREMENT_LEGACY_IMMUTABLE_FIELDS = Object.freeze(["title", "desc
 export const REQUIREMENT_LINK_FIELDS = Object.freeze(["source_ids", "supersedes_id", "superseded_by_id"]);
 export const DELIVERABLE_IMMUTABLE_FIELDS = Object.freeze(["title", "type", "format", "version", "path", "content_sha256", "audience", "purpose", "requirement_ids", "source_ids", "due_at", "acceptance_criteria", "reviewers"]);
 export const DELIVERABLE_CONTROLLED_FIELDS = Object.freeze([...DELIVERABLE_IMMUTABLE_FIELDS, "supersedes_id", "superseded_by_id"]);
+// 改 text 等于换掉用户说过的话，所以旧条退役留档、新条接手，而不是原地覆盖。
+// scope 只是分类，改了不丢事实，原地更新即可。
+export const PREFERENCE_SUPERSEDING_FIELDS = Object.freeze(["text"]);
 export const DECISION_CONTROLLED_FIELDS = Object.freeze(["title", "description", "rationale", "source_ids", "superseded_by_id"]);
 
 export async function readJson(root, relativePath) {
@@ -78,16 +83,12 @@ export async function readJson(root, relativePath) {
   }
 }
 
-export async function readWorkspace(root) {
-  const entries = await Promise.all(Object.entries(STORE_FILES).map(async ([key, relative]) => [key, await readJson(root, relative)]));
-  return Object.fromEntries(entries);
+// 所有事实源都由新模板创建并严格读取；缺失必须显式报错，不能静默当成空数据。
+export async function readStore(root, key) {
+  return readJson(root, STORE_FILES[key]);
 }
 
-export async function readOptionalJson(root, relativePath, fallback) {
-  try {
-    return await readJson(root, relativePath);
-  } catch (error) {
-    if (error.code === "store_missing") return structuredClone(fallback);
-    throw error;
-  }
+export async function readWorkspace(root) {
+  const entries = await Promise.all(Object.keys(STORE_FILES).map(async (key) => [key, await readStore(root, key)]));
+  return Object.fromEntries(entries);
 }

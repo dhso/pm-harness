@@ -84,6 +84,44 @@
 |---|---|---|
 | `content` | `string` | 是 |
 
+### `memory.preference.upsert`
+
+记录用户表达或复盘确认的协作与交付偏好，一次一条。无需审批：改写已有条目的 text 时 Harness 自动退役旧条并分配新 ID，返回的 superseded 给出被取代的原文，据此向用户回述。scope 是自由分类，常用 communication、document、schedule、collaboration、tooling。
+
+新建记录时另需：`scope`、`text`
+
+更新记录时另需：`id`
+
+可省略并由 Harness 补全：`id`、`source_ids`、`created_at`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `id` | `string` |  |
+| `scope` | `string` |  |
+| `text` | `string` |  |
+| `source_ids` | `stringArray` |  |
+| `created_at` | `timestamp` |  |
+| `updated_at` | `timestamp` |  |
+
+`preference` 状态取值：`active`、`retired`
+
+允许转换：`active` → `retired`
+
+### `memory.preference.retire`
+
+退役不再适用的偏好，并说明原因。退役记录保留在 memory/preferences.json 中以备回溯，只是不进生成视图。
+
+必填：`id`、`retire_reason`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `id` | `string` | 是 |
+| `retire_reason` | `string` | 是 |
+
+`preference` 状态取值：`active`、`retired`
+
+允许转换：`active` → `retired`
+
 ### `stakeholder.upsert`
 
 新建记录时另需：`name`、`role`
@@ -538,23 +576,29 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 
 ### `observation.record`
 
-必填：`title`、`pattern_key`、`evidence`
+新建观察需要标题、pattern_key 和证据；带已有 id 时按更新合并，可将状态转为 resolved 或 dismissed 以关闭观察。
+
+新建记录时另需：`title`、`pattern_key`、`evidence`
+
+更新记录时另需：`id`
 
 可省略并由 Harness 补全：`id`、`status`、`created_at`
 
 | 字段 | 类型 | 必填 |
 |---|---|---|
 | `id` | `string` |  |
-| `title` | `string` | 是 |
-| `pattern_key` | `string` | 是 |
+| `title` | `string` |  |
+| `pattern_key` | `string` |  |
 | `status` | `string` |  |
-| `evidence` | `string` | 是 |
+| `evidence` | `string` |  |
 | `suggested_rule` | `nullableString` |  |
 | `proposal_id` | `nullableString` |  |
 | `created_at` | `timestamp` |  |
 | `resolved_at` | `nullableTimestamp` |  |
 
 `observation` 状态取值：`open`、`resolved`、`dismissed`
+
+允许转换：`open` → `resolved` | `dismissed`
 
 ### `rule.propose`
 
@@ -593,6 +637,21 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 | 字段 | 类型 | 必填 |
 |---|---|---|
 | `id` | `string` | 是 |
+
+`proposal` 状态取值：`proposed`、`approved`、`active`、`rejected`、`retired`
+
+允许转换：`proposed` → `approved` | `rejected`；`approved` → `active` | `rejected`；`active` → `retired`
+
+### `rule.reject`
+
+驳回不采纳的规则提案；必须由用户明确确认，理由写入 disposition_reason。驳回后提案离开待批准队列，不再重复提示。
+
+必填：`id`、`reason`
+
+| 字段 | 类型 | 必填 |
+|---|---|---|
+| `id` | `string` | 是 |
+| `reason` | `string` | 是 |
 
 `proposal` 状态取值：`proposed`、`approved`、`active`、`rejected`、`retired`
 
