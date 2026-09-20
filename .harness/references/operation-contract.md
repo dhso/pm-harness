@@ -143,7 +143,7 @@
 
 ### `source.register`
 
-raw_path 必须位于项目目录内；items 为收件箱条目数组。
+raw_path 必须位于项目目录内；items 为收件箱条目数组。Harness 按原件 SHA-256、source_locator，或 thread_id + source_time + sender 自动识别重复来源并复用现有记录。
 
 新建记录时另需：`type`
 
@@ -547,7 +547,7 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 
 ### `wiki.register`
 
-新页面必须提供 content；更新已有页面时可省略。
+新页面必须提供 content；更新已有页面时可省略。提供 content 代表完成本次内容复查，未显式传 last_reviewed_at 时自动刷新为当前时间。新页面传 supersedes_id 时，Harness 原子关闭旧页并建立双向替代链。
 
 新建记录时另需：`title`、`path`
 
@@ -671,7 +671,7 @@ target_id 为非空字符串且不得重复；before 与 after 必须是对象�
 
 ### `operation.compensate`
 
-实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和人工维护的文档不可直接补偿，状态与当前记忆摘要可以事务撤销。
+实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和 Harness 外人工维护的文档不可直接补偿，状态、当前记忆摘要与 Wiki 可以事务撤销。
 
 必填：`operation_id`
 

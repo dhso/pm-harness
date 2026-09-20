@@ -74,7 +74,7 @@ export const OPERATION_SPECS = Object.freeze({
     fields: { ...fieldTypes("source"), raw_path: "workspacePath", archive_reason: "string", items: "inboxItemArray" },
     create_required: ["type"],
     defaults: ["id", "title", "captured_at", "summary"],
-    note: "raw_path 必须位于项目目录内；items 为收件箱条目数组。",
+    note: "raw_path 必须位于项目目录内；items 为收件箱条目数组。Harness 按原件 SHA-256、source_locator，或 thread_id + source_time + sender 自动识别重复来源并复用现有记录。",
   },
   "activity.record": {
     fields: { ...fieldTypes("activity"), timestamp: "timestamp" },
@@ -154,7 +154,7 @@ export const OPERATION_SPECS = Object.freeze({
     update_required: ["id"],
     defaults: ["id", "status", "source_ids", "related_ids", "last_reviewed_at"],
     status_kinds: ["wiki"],
-    note: "新页面必须提供 content；更新已有页面时可省略。",
+    note: "新页面必须提供 content；更新已有页面时可省略。提供 content 代表完成本次内容复查，未显式传 last_reviewed_at 时自动刷新为当前时间。新页面传 supersedes_id 时，Harness 原子关闭旧页并建立双向替代链。",
   },
   "observation.record": {
     fields: fieldTypes("observation"),
@@ -175,7 +175,7 @@ export const OPERATION_SPECS = Object.freeze({
   "rule.activate": { fields: { id: "string" }, required: ["id"], status_kinds: ["proposal"], note: "必须由用户明确确认。" },
   "rule.reject": { fields: { id: "string", reason: "string" }, required: ["id", "reason"], status_kinds: ["proposal"], note: "驳回不采纳的规则提案；必须由用户明确确认，理由写入 disposition_reason。驳回后提案离开待批准队列，不再重复提示。" },
   "rule.retire": { fields: { id: "string" }, required: ["id"], status_kinds: ["rule"], note: "必须由用户明确确认。" },
-  "operation.compensate": { fields: { operation_id: "string" }, required: ["operation_id"], note: "实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和人工维护的文档不可直接补偿，状态与当前记忆摘要可以事务撤销。" },
+  "operation.compensate": { fields: { operation_id: "string" }, required: ["operation_id"], note: "实际执行需要 approval.confirmed_by_user_at；追加补偿操作来撤销最近一次可撤销写入，原操作保留；受控变更和 Harness 外人工维护的文档不可直接补偿，状态、当前记忆摘要与 Wiki 可以事务撤销。" },
   "workflow.apply": { fields: { kind: "string", operations: "operationArray" }, required: ["kind", "operations"], note: "operations 按依赖顺序排列；不支持嵌套工作流。" },
 });
 

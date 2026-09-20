@@ -372,6 +372,18 @@ test("source registration archives atomically, hashes content, deduplicates, and
   assert.ok(item.applied_at);
 });
 
+test("daily brief keeps triaged inbox work visible until it is applied", async () => {
+  const root = await workspace();
+  await recordOperation(root, operation("source.register", {
+    type: "daily_note",
+    title: "Triaged note",
+    summary: "Action is routed but not complete",
+    items: [{ classification: "action", summary: "Apply routed knowledge", status: "triaged", proposed_action: "Update the Wiki" }],
+  }));
+  const brief = await buildDailyBrief(root);
+  assert.ok(brief.inbox.some((item) => item.id === "INB-001" && item.status === "triaged"));
+});
+
 test("activities use project timezone and daily brief includes recent work with at most three reasons", async () => {
   const root = await workspace();
   await initialize(root, "Daily brief");
@@ -466,6 +478,57 @@ test("Wiki catalog detects missing pages, unregistered pages, bad sources, and o
   assert.ok(codes.includes("wiki_page_missing"));
   assert.ok(codes.includes("wiki_not_registered"));
   assert.ok(codes.includes("missing_reference"));
+});
+
+test("Wiki writes refresh review time and reject incomplete supersession before commit", async () => {
+  const root = await workspace();
+  await recordOperation(root, operation("wiki.register", {
+    title: "Context",
+    path: "knowledge/wiki/context.md",
+    content: "# Context\n\nOriginal.\n",
+    source_ids: [],
+    related_ids: [],
+    last_reviewed_at: "2020-01-01T00:00:00.000Z",
+  }));
+  const updated = await recordOperation(root, operation("wiki.register", {
+    id: "WIKI-001",
+    content: "# Context\n\nUpdated.\n",
+  }));
+  assert.notEqual(updated.wiki.last_reviewed_at, "2020-01-01T00:00:00.000Z");
+  assert.ok(Date.parse(updated.wiki.last_reviewed_at) > Date.parse("2020-01-01T00:00:00.000Z"));
+
+  const before = await readJson(root, "knowledge/catalog.json");
+  const error = await rejection(recordOperation(root, operation("wiki.register", { id: "WIKI-001", status: "superseded" })));
+  const details = JSON.parse(error.message);
+  assert.equal(details.code, "workspace_validation_failed");
+  assert.ok(details.issues.some((item) => item.code === "supersession_missing"));
+  assert.deepEqual(await readJson(root, "knowledge/catalog.json"), before);
+});
+
+test("Wiki successor creation closes both sides of the supersession chain atomically", async () => {
+  const root = await workspace();
+  await recordOperation(root, operation("wiki.register", {
+    title: "Old context",
+    path: "knowledge/wiki/old-context.md",
+    content: "# Old context\n",
+    source_ids: [],
+    related_ids: [],
+  }));
+  await recordOperation(root, operation("wiki.register", {
+    title: "Current context",
+    path: "knowledge/wiki/current-context.md",
+    content: "# Current context\n",
+    source_ids: [],
+    related_ids: [],
+    supersedes_id: "WIKI-001",
+  }));
+  const pages = (await readJson(root, "knowledge/catalog.json")).pages;
+  const predecessor = pages.find((item) => item.id === "WIKI-001");
+  const successor = pages.find((item) => item.id === "WIKI-002");
+  assert.equal(predecessor.status, "superseded");
+  assert.equal(predecessor.superseded_by_id, successor.id);
+  assert.equal(successor.supersedes_id, predecessor.id);
+  assert.equal((await lintWorkspace(root)).ok, true);
 });
 
 test("repeated observations create one proposal, never auto-activate, and produce due review advice", async () => {

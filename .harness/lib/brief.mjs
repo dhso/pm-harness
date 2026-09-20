@@ -31,7 +31,7 @@ export async function buildDailyBrief(root, now = new Date()) {
     ...(data.deliverables.deliverables || []).filter((item) => item.status === "review").map((item) => ({ kind: "deliverable", ...item })),
     ...(data.proposals.proposals || []).filter((item) => item.status === "proposed").map((item) => ({ kind: "rule", ...item })),
   ];
-  const inbox = (data.inbox.items || []).filter((item) => ["new", "needs_confirmation"].includes(item.status));
+  const inbox = (data.inbox.items || []).filter((item) => ["new", "triaged", "needs_confirmation"].includes(item.status));
   const commitments = inbox.filter((item) => item.classification === "commitment");
   const openRisks = (data.registers.risks || []).filter((item) => ["open", "monitoring"].includes(item.status)).sort((left, right) => riskScore(right) - riskScore(left));
   const priorityRisks = openRisks.filter((item) => riskScore(item) >= 6 || item.response_due && item.response_due <= windowEnd || item.next_review && item.next_review <= today);

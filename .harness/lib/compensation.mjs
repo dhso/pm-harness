@@ -3,11 +3,22 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { clone } from "./helpers.mjs";
 import { digestValue } from "./model.mjs";
+import { safeTransactionTarget } from "./transaction.mjs";
 import { COLLECTIONS } from "./workspace.mjs";
 
 const collectionsByStore = new Map();
 const collectionKeys = new Set();
 const MANAGED_DOCUMENTS = new Set(["project/status.md", "memory/current.md"]);
+
+function isManagedDocument(documentPath) {
+  if (MANAGED_DOCUMENTS.has(documentPath)) return true;
+  if (typeof documentPath !== "string" || documentPath.includes("\\")) return false;
+  const normalized = path.posix.normalize(documentPath);
+  return normalized === documentPath
+    && normalized.startsWith("knowledge/wiki/")
+    && normalized.endsWith(".md")
+    && normalized !== "knowledge/wiki/.md";
+}
 for (const [store, collection] of COLLECTIONS) {
   if (!collectionsByStore.has(store)) collectionsByStore.set(store, []);
   collectionsByStore.get(store).push(collection);
@@ -52,8 +63,8 @@ export async function captureCompensation(root, before, after, changedStores, ex
   const documents = [];
   for (const entry of extraEntries) {
     if (entry.path.startsWith("archive/files/")) retainedPaths.add(entry.path);
-    else if (MANAGED_DOCUMENTS.has(entry.path)) {
-      const absolute = path.join(root, entry.path);
+    else if (isManagedDocument(entry.path)) {
+      const absolute = safeTransactionTarget(root, entry.path, { rejectTargetSymlink: true });
       const beforeExists = existsSync(absolute);
       documents.push({
         path: entry.path,
@@ -63,8 +74,8 @@ export async function captureCompensation(root, before, after, changedStores, ex
       });
     } else blockedPaths.push(entry.path);
   }
-  // 人工文档写入本来就不能直接补偿；不要为不可补偿的操作复制整份事实快照，
-  // 这样 status/memory/Wiki 等长文本不会把 change-log.json 成倍撑大。
+  // Harness 管理的摘要与 Wiki 可以按内容哈希安全补偿；其他人工文档仍需正向修正。
+  // 对不可补偿的操作不复制整份事实快照，避免 change-log.json 无意义膨胀。
   if (blockedPaths.length) return {
     version: 2,
     reversible: false,
@@ -146,7 +157,7 @@ function assertValidSnapshot(snapshot, operationId, data) {
     if (snapshot.version === 2 && typeof item.after_hash !== "string") invalid("invalid_metadata_hash");
   }
   for (const item of snapshot.documents || []) {
-    if (!item || !MANAGED_DOCUMENTS.has(item.path) || typeof item.before_exists !== "boolean" || typeof item.after_hash !== "string") invalid("invalid_document_change");
+    if (!item || !isManagedDocument(item.path) || typeof item.before_exists !== "boolean" || typeof item.after_hash !== "string") invalid("invalid_document_change");
     if (item.before_exists && typeof item.before !== "string") invalid("invalid_document_before");
   }
 }
@@ -213,7 +224,7 @@ export async function applyCompensation(root, data, targetOperationId) {
   }
 
   for (const change of [...(snapshot.documents || [])].reverse()) {
-    const absolute = path.join(root, change.path);
+    const absolute = safeTransactionTarget(root, change.path, { rejectTargetSymlink: true });
     const current = existsSync(absolute) ? await readFile(absolute, "utf8") : undefined;
     if (digestValue(current) !== change.after_hash) fail("compensation_conflict", { target_id: change.path, fix: "摘要内容在原操作后发生了变化；请改用正向修正，避免覆盖后续内容" });
     entries.push(change.before_exists ? { path: change.path, content: change.before } : { path: change.path, delete: true });

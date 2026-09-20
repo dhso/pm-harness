@@ -7,15 +7,19 @@ import path from "node:path";
 const LOCK_STALE_AFTER_MS = 30 * 60 * 1000;
 const LOCK_RECOVERY_FILE = "write-lock-recovery.lock";
 
-function safeTarget(root, relativePath) {
+export function safeTransactionTarget(root, relativePath, { rejectTargetSymlink = false } = {}) {
   if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) throw new Error(`Transaction path must be relative: ${relativePath}`);
   const resolvedRoot = path.resolve(root);
   const target = path.resolve(root, relativePath);
   if (target !== resolvedRoot && !target.startsWith(`${resolvedRoot}${path.sep}`)) throw new Error(`Transaction path escapes workspace: ${relativePath}`);
   let current = resolvedRoot;
-  for (const segment of path.relative(resolvedRoot, target).split(path.sep).slice(0, -1)) {
+  const segments = path.relative(resolvedRoot, target).split(path.sep);
+  for (const [index, segment] of segments.entries()) {
     current = path.join(current, segment);
-    if (existsSync(current) && lstatSync(current).isSymbolicLink()) throw new Error(`Transaction path uses a symbolic-link directory: ${relativePath}`);
+    const isTarget = index === segments.length - 1;
+    if (existsSync(current) && lstatSync(current).isSymbolicLink() && (!isTarget || rejectTargetSymlink)) {
+      throw new Error(`Transaction path uses a symbolic-link ${isTarget ? "target" : "directory"}: ${relativePath}`);
+    }
   }
   return target;
 }
@@ -148,7 +152,7 @@ async function recoverTransactions(root) {
       continue;
     }
     for (const item of [...(manifest.entries || [])].reverse()) {
-      const target = safeTarget(root, item.path);
+      const target = safeTransactionTarget(root, item.path);
       const backup = path.join(transactionRoot, "old", `${item.index}.data`);
       if (item.existed && existsSync(backup)) {
         if (existsSync(target)) await rm(target, { force: true });
@@ -191,7 +195,7 @@ export async function commitTransaction(root, operationId, entries, options = {}
     await writeManifest(transactionRoot, { version: 1, operation_id: operationId, phase: "prepared", entries: [] });
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
-      const target = safeTarget(root, entry.path);
+      const target = safeTransactionTarget(root, entry.path);
       const staged = path.join(transactionRoot, "new", `${index}.data`);
       const backup = path.join(transactionRoot, "old", `${index}.data`);
       if (!entry.delete) {

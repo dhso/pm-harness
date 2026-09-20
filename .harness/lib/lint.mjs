@@ -337,6 +337,14 @@ export async function collectIssues(root, data, options = {}) {
     if (item.status === "active" && item.review_due_at && item.review_due_at <= localDate(data.project.timezone || data.config.default_timezone || "UTC")) addIssue(issues, "warning", "wiki_review_overdue", STORE_FILES.catalog, `${item.id} review was due on ${item.review_due_at}`);
     if (item.status === "superseded" && !item.superseded_by_id) addIssue(issues, "error", "supersession_missing", STORE_FILES.catalog, `${item.id} is superseded without a replacement`);
     if (item.superseded_by_id && (byKind.wiki || []).find((candidate) => candidate.id === item.superseded_by_id)?.id && (byKind.wiki || []).find((candidate) => candidate.id === item.superseded_by_id)?.supersedes_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.catalog, `${item.id} replacement link is not reciprocal`);
+    if (item.supersedes_id && (byKind.wiki || []).find((candidate) => candidate.id === item.supersedes_id)?.superseded_by_id !== item.id) addIssue(issues, "error", "supersession_link_mismatch", STORE_FILES.catalog, `${item.id} predecessor link is not reciprocal`);
+  }
+  for (const start of byKind.wiki || []) {
+    const seen = new Set([start.id]); let next = start.superseded_by_id;
+    while (next) {
+      if (seen.has(next)) { addIssue(issues, "error", "supersession_cycle", STORE_FILES.catalog, `Wiki supersession cycle starts at ${start.id}`); break; }
+      seen.add(next); next = (byKind.wiki || []).find((item) => item.id === next)?.superseded_by_id;
+    }
   }
   if (checkWikiRegistration) {
     for (const file of await walkMarkdown(path.join(root, "knowledge/wiki"))) {

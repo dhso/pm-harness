@@ -143,7 +143,7 @@ test("one workflow keeps facts, status, and current memory in sync and undoable"
   assert.equal(await readFile(path.join(root, "memory/current.md"), "utf8"), originalMemory);
 });
 
-test("controlled changes, human-authored files, and later conflicts are refused", async () => {
+test("controlled changes and later conflicts are refused while Harness-managed Wiki stays undoable", async () => {
   const controlledRoot = await workspace();
   const stakeholder = await recordOperation(controlledRoot, operation("stakeholder.upsert", {
     name: "Sponsor", role: "Sponsor", approval_scopes: ["requirement"],
@@ -154,7 +154,21 @@ test("controlled changes, human-authored files, and later conflicts are refused"
   const wiki = await recordOperation(contentRoot, operation("wiki.register", {
     title: "Context", path: "knowledge/wiki/context.md", content: "# Context\n", source_ids: [], related_ids: [],
   }));
-  assert.equal((await errorDetails(compensate(contentRoot, wiki.operation_id))).code, "operation_not_compensatable");
+  assert.equal(existsSync(path.join(contentRoot, "knowledge/wiki/context.md")), true);
+  await compensate(contentRoot, wiki.operation_id);
+  assert.equal(existsSync(path.join(contentRoot, "knowledge/wiki/context.md")), false);
+  assert.equal((await readJson(contentRoot, "knowledge/catalog.json")).pages.length, 0);
+  assert.doesNotMatch(await readFile(path.join(contentRoot, "knowledge/index.md"), "utf8"), /Context/);
+
+  const updateRoot = await workspace();
+  await recordOperation(updateRoot, operation("wiki.register", {
+    title: "Context", path: "knowledge/wiki/context.md", content: "# Context\n\nOriginal.\n", source_ids: [], related_ids: [],
+  }));
+  const update = await recordOperation(updateRoot, operation("wiki.register", {
+    id: "WIKI-001", content: "# Context\n\nMistake.\n",
+  }));
+  await compensate(updateRoot, update.operation_id);
+  assert.equal(await readFile(path.join(updateRoot, "knowledge/wiki/context.md"), "utf8"), "# Context\n\nOriginal.\n");
 
   const conflictRoot = await workspace();
   const task = await recordOperation(conflictRoot, operation("schedule.upsert", { collection: "tasks", title: "Original", owner: "PM" }));
@@ -257,6 +271,21 @@ test("transaction targets cannot escape through a workspace symlink", async () =
   const { commitTransaction } = await import("../.harness/lib/transaction.mjs");
   await assert.rejects(commitTransaction(root, "OP-symlink-guard", [{ path: "linked-output/file.txt", content: "blocked" }]), /symbolic-link directory/);
   assert.equal(existsSync(path.join(outside, "file.txt")), false);
+});
+
+test("Wiki compensation snapshots refuse symbolic-link targets", async () => {
+  const root = await workspace();
+  const outside = await mkdtemp(path.join(os.tmpdir(), "pm-harness-wiki-outside-"));
+  const outsidePage = path.join(outside, "context.md");
+  await writeFile(outsidePage, "outside content\n", "utf8");
+  await symlink(outsidePage, path.join(root, "knowledge/wiki/context.md"));
+
+  await assert.rejects(recordOperation(root, operation("wiki.register", {
+    title: "Context", path: "knowledge/wiki/context.md", content: "# Context\n", source_ids: [], related_ids: [],
+  })), /symbolic-link target/);
+  assert.equal(await readFile(outsidePage, "utf8"), "outside content\n");
+  assert.equal((await readJson(root, "knowledge/catalog.json")).pages.length, 0);
+  assert.equal((await readJson(root, "governance/change-log.json")).operations.length, 0);
 });
 
 test("preference writes stay undoable because they never enter the controlled change log", async () => {

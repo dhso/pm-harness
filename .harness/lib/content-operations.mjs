@@ -136,11 +136,26 @@ export async function applyContentOperation({ root, envelope, data, now, changed
   if (envelope.type === "wiki.register") {
     const payload = envelope.payload;
     const existing = payload.id ? data.catalog.pages.find((item) => item.id === payload.id) : null;
-    const record = { ...existing, id: nextWorkspaceId(data, data.catalog.pages, "wiki", payload.id), title: payload.title ?? existing?.title, path: safeWikiPath(payload.path ?? existing?.path), status: payload.status || existing?.status || "active", source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), related_ids: normalizeArray(payload.related_ids ?? existing?.related_ids), owner: payload.owner ?? existing?.owner ?? null, last_reviewed_at: payload.last_reviewed_at ?? existing?.last_reviewed_at ?? now, review_due_at: payload.review_due_at ?? existing?.review_due_at ?? null, supersedes_id: payload.supersedes_id ?? existing?.supersedes_id ?? null, superseded_by_id: payload.superseded_by_id ?? existing?.superseded_by_id ?? null };
+    const contentProvided = typeof payload.content === "string";
+    const record = { ...existing, id: nextWorkspaceId(data, data.catalog.pages, "wiki", payload.id), title: payload.title ?? existing?.title, path: safeWikiPath(payload.path ?? existing?.path), status: payload.status || existing?.status || "active", source_ids: normalizeArray(payload.source_ids ?? existing?.source_ids ?? envelope.source_ids), related_ids: normalizeArray(payload.related_ids ?? existing?.related_ids), owner: payload.owner ?? existing?.owner ?? null, last_reviewed_at: payload.last_reviewed_at ?? (contentProvided ? now : existing?.last_reviewed_at ?? now), review_due_at: payload.review_due_at ?? existing?.review_due_at ?? null, supersedes_id: payload.supersedes_id ?? existing?.supersedes_id ?? null, superseded_by_id: payload.superseded_by_id ?? existing?.superseded_by_id ?? null };
     if (existing) assertTransition("wiki", existing.status, record.status, record.id);
+    if (existing?.supersedes_id && record.supersedes_id !== existing.supersedes_id) {
+      throw new Error(JSON.stringify({ code: "wiki_supersession_immutable", id: record.id, fix: "Wiki 替代链建立后不可改指；请创建正确的后继页面或正向修正现有链" }));
+    }
+    if (record.supersedes_id) {
+      if (record.supersedes_id === record.id) throw new Error(JSON.stringify({ code: "invalid_wiki_supersession", id: record.id, fix: "Wiki 页面不能取代自身" }));
+      const predecessor = data.catalog.pages.find((item) => item.id === record.supersedes_id);
+      if (!predecessor) throw new Error(JSON.stringify({ code: "wiki_predecessor_not_found", id: record.id, predecessor_id: record.supersedes_id, fix: "用 query wiki 确认被替代页面 ID" }));
+      if (predecessor.superseded_by_id && predecessor.superseded_by_id !== record.id) {
+        throw new Error(JSON.stringify({ code: "wiki_predecessor_already_superseded", id: predecessor.id, superseded_by_id: predecessor.superseded_by_id, fix: "沿现有后继继续演进，不要为同一页面建立两个替代分支" }));
+      }
+      assertTransition("wiki", predecessor.status, "superseded", predecessor.id);
+      Object.assign(predecessor, { status: "superseded", superseded_by_id: record.id });
+      validateOrThrow("wiki", predecessor);
+    }
     validateOrThrow("wiki", record);
     upsert(data.catalog.pages, record);
-    if (typeof payload.content === "string") extraEntries.push({ path: record.path, content: payload.content.endsWith("\n") ? payload.content : `${payload.content}\n` });
+    if (contentProvided) extraEntries.push({ path: record.path, content: payload.content.endsWith("\n") ? payload.content : `${payload.content}\n` });
     else if (!existsSync(path.join(root, record.path))) throw new Error("wiki.register requires content when the page does not exist");
     changedStores.add("catalog");
     resultIds.push(record.id);
