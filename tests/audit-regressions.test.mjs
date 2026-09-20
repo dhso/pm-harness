@@ -1,20 +1,13 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { lintWorkspace, maintainWorkspace, readJson, rebuildWorkspace, recordOperation } from "../.harness/lib/core.mjs";
 import { SCHEMA_VERSION } from "../.harness/lib/model.mjs";
-
-const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const copiedDirectories = [".harness", ".agents", "project", "knowledge", "memory", "deliverables", "governance", "archive", "activity", "templates"];
-const copiedFiles = ["AGENTS.md", ".gitignore", ".gitattributes", "package.json"];
+import { createTestWorkspace } from "./support/workspace.mjs";
 
 async function workspace() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pm-harness-audit-"));
-  for (const item of copiedDirectories) await cp(path.join(repositoryRoot, item), path.join(root, item), { recursive: true });
-  for (const item of copiedFiles) await cp(path.join(repositoryRoot, item), path.join(root, item));
-  return root;
+  return createTestWorkspace({ prefix: "pm-harness-audit-" });
 }
 
 let sequence = 0;

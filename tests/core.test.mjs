@@ -20,16 +20,12 @@ import {
 } from "../.harness/lib/core.mjs";
 import { nearestName, OPERATION_TYPES, SCHEMA_VERSION } from "../.harness/lib/model.mjs";
 import { commitTransaction } from "../.harness/lib/transaction.mjs";
+import { createTestWorkspace, TEST_STATIC_DIRECTORIES, TEST_STATIC_FILES } from "./support/workspace.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
-const copiedDirectories = [".harness", ".agents", "project", "knowledge", "memory", "deliverables", "governance", "archive", "activity", "templates"];
-const copiedFiles = ["AGENTS.md", ".gitignore", ".gitattributes", "package.json"];
 
 async function workspace() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "pm-harness-test-"));
-  for (const item of copiedDirectories) await cp(path.join(repositoryRoot, item), path.join(root, item), { recursive: true });
-  for (const item of copiedFiles) await cp(path.join(repositoryRoot, item), path.join(root, item));
-  return root;
+  return createTestWorkspace();
 }
 
 async function writeJsonFixture(root, relative, value) {
@@ -117,6 +113,23 @@ test("base template rebuilds, passes lint, uses LF, and has real Skills", async 
   assert.doesNotMatch(agentRules, /<(?:harness_root|harness_tmp|harness_cache|tmp)_dir>|\.harness\/(?:tmp|cache)/);
   const ignored = (await readFile(path.join(root, ".gitignore"), "utf8")).split("\n");
   assert.ok(ignored.includes("/tmp/"));
+});
+
+test("test workspaces ignore initialized project data from the source repository", async () => {
+  const host = await mkdtemp(path.join(os.tmpdir(), "pm-harness-initialized-host-"));
+  await Promise.all([
+    ...TEST_STATIC_DIRECTORIES.map((item) => cp(path.join(repositoryRoot, item), path.join(host, item), { recursive: true })),
+    ...TEST_STATIC_FILES.map((item) => cp(path.join(repositoryRoot, item), path.join(host, item))),
+  ]);
+  await mkdir(path.join(host, "project"), { recursive: true });
+  await writeFile(path.join(host, "project/project.json"), `${JSON.stringify({ schema_version: 1, initialized: true, id: "PRJ-001", name: "Live project" }, null, 2)}\n`, "utf8");
+  await writeFile(path.join(host, ".harness/config.json"), `${JSON.stringify({ schema_version: 1, upcoming_days: 999 }, null, 2)}\n`, "utf8");
+
+  const root = await createTestWorkspace({ repositoryRoot: host, prefix: "pm-harness-isolated-" });
+  assert.equal((await readJson(root, "project/project.json")).initialized, false);
+  assert.equal((await readJson(root, ".harness/config.json")).upcoming_days, 7);
+  assert.equal((await readJson(root, "knowledge/inbox.json")).items.length, 0);
+  assert.equal((await lintWorkspace(root)).ok, true);
 });
 
 test("lint enforces the 500-line Harness module boundary", async () => {
