@@ -14,7 +14,7 @@ OfficeCLI 用于处理 `.docx`、`.xlsx` 和 `.pptx`，不依赖本机安装 Off
 
 ## 使用前
 
-- 先检查 `officecli --version`。工具不可用时说明阻塞，不要未经授权自动安装或联网下载。
+- 先检查 `officecli --version` 命令缺失时，先取得安装或升级授权，再运行 `npm install --global @officecli/officecli` 安装。
 - 不确定命令、路径或属性名称时，先运行 `officecli help` 或 `officecli help <格式> <元素>`，不要猜测。
 - 优先使用分层策略：L1 读取/检查，L2 DOM 编辑，L3 原始 XML；只有上一层无法表达需求时才降级。
 - 长流程可用 `open` 和 `close` 保持驻留；交给其他程序读取前必须 `save` 或 `close`。
