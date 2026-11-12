@@ -13,6 +13,7 @@
 - 从邮件、聊天、截图、附件或随手记录中提取项目事项；
 - 起草可直接发送的项目邮件、升级说明、决策请求和会议跟进；
 - 编写或变更需求、验收标准和项目范围；
+- 为客户设计数据分析计划、诊断业务问题，并基于只读查询提出可验证的咨询建议；
 - 制作周报、方案、会议纪要、PRD、汇报材料等交付物；
 - 沉淀可追溯的项目 Wiki、决策和经验；
 - 在不同 AI Agent 会话之间延续项目上下文；
@@ -64,6 +65,17 @@
 - `用 OfficeCLI 检查这个 Excel 的公式和格式，并生成一份带图表的 PPT。`
 
 文件生成、批准、发送和验收是不同状态。AI Agent 不会因为文件已经生成就把它记录为已交付或已验收；批准后还会用文件 SHA-256 检测原地覆盖。
+
+### 数据分析咨询
+
+- `客户想改善转化率，先给分析方向、指标口径和所需数据清单。`
+- `根据已有只读数据库连接，分析近三个月的客户流失，先核验数据质量。`
+- `这个差异足以支持调整客户策略吗？给出证据、局限和验证办法。`
+- `把分析结果整理成客户咨询建议，说明优先行动、收益假设和验证条件。`
+
+AI Agent 会从客户要做的决定倒推分析问题，区分观察、解释、假设和建议。没有数据时先给分析计划；不会把未执行的查询当成发现，或把相关性当成因果。
+
+数据库分析前，AI Agent 会引导安装 [DBX 客户端](https://github.com/t8y2/dbx)及 [CLI](https://github.com/t8y2/dbx/blob/main/packages/cli/README.md)，并在客户端配置连接。查询默认只读并限制规模和时间，实际支持以本机能力检查为准。
 
 ## Harness 的工作闭环
 
@@ -246,6 +258,7 @@ requested → drafting → review → approved → delivered → accepted
 | `stakeholder-register.md` | 干系人角色、影响力、关注点和沟通方式 |
 | `communication-plan.md` | 沟通对象、内容、频率、渠道和责任人 |
 | `source-note.md` | 对来源材料进行摘要、引用和可信度整理 |
+| `data-analysis-plan.md` | 从客户决策倒推指标、数据需求、分析步骤和验证条件 |
 | `acceptance-report.md` | 对照验收标准记录证据和结论 |
 | `retrospective.md` | 复盘目标、偏差、经验和后续行动 |
 
@@ -260,6 +273,8 @@ requested → drafting → review → approved → delivered → accepted
 | `pm-daily-brief` | 每天首次重要互动或询问下一步时生成聚焦工作建议 |
 | `pm-source-intake` | 处理邮件、聊天、截图、日常记录和附件 |
 | `pm-knowledge` | 回答项目问题或整理 Wiki 知识 |
+| `pm-data-analysis` | 客户数据分析咨询、指标设计、分析规划、诊断和行动建议 |
+| `dbx` | 通过 DBX CLI 探索数据库结构并执行有边界的只读查询 |
 | `pm-requirements` | 编写、完善或变更需求和验收标准 |
 | `pm-planning` | 创建或调整计划、里程碑、依赖和时间预测 |
 | `pm-status` | 编写会议纪要，并将已确认内容同步到需求、排期、风险、决定和状态 |
@@ -272,6 +287,8 @@ requested → drafting → review → approved → delivered → accepted
 `.agents/skills/` 直接保存实际 Skill 内容，不使用软链接，也没有需要同步维护的根 `skills/` 副本。复制目录、下载压缩包或在 Windows 上使用时都能保持一致。
 
 Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`pm-task-guide` 先完成任务分类，再选择一个负责项目结果和受控写入的 `workflow`，按需附加 `capability`（例如 `officecli`）。Skill 的 frontmatter 使用 `kind`、`domain`、`owner` 和 `composes` 声明职责关系；详细格式规则只在任务需要时读取 `references/`，避免一次加载整套手册。
+
+数据分析由 `pm-data-analysis` 负责咨询结果与项目收尾，实际连库时组合参考 [DBX 官方 Skill](https://github.com/t8y2/dbx/blob/main/skills/dbx/SKILL.md) 的只读能力。分析证据和报告复用来源与交付物机制；外部访问限制由 DBX 和数据库执行，本地事实校验不能证明连接只读。
 
 ## `.harness/`：后台自动维护能力
 
