@@ -13,7 +13,8 @@ metadata:
 
 ## 使用前
 
-确认已安装 [DBX 客户端](https://github.com/t8y2/dbx) 并在客户端配置连接，且 CLI 的 `dbx --version` 可用；缺失时按[官方说明](https://github.com/t8y2/dbx/blob/main/packages/cli/README.md)引导安装。
+- 先检查 `dbx --version`；CLI 缺失时，取得安装授权后运行 `npm install --global @dbx-app/cli`，再复查版本。
+- 连接在 [DBX 客户端](https://github.com/t8y2/dbx)配置；客户端缺失时引导安装。
 
 ## 查询流程
 

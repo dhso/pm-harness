@@ -75,7 +75,7 @@
 
 AI Agent 会从客户要做的决定倒推分析问题，区分观察、解释、假设和建议。没有数据时先给分析计划；不会把未执行的查询当成发现，或把相关性当成因果。
 
-数据库分析前，AI Agent 会引导安装 [DBX 客户端](https://github.com/t8y2/dbx)及 [CLI](https://github.com/t8y2/dbx/blob/main/packages/cli/README.md)，并在客户端配置连接。查询默认只读并限制规模和时间，实际支持以本机能力检查为准。
+数据库分析前，AI Agent 会检查 [DBX CLI](https://github.com/t8y2/dbx/blob/main/packages/cli/README.md)，缺失时经授权通过 npm 全局安装，并引导在 [DBX 客户端](https://github.com/t8y2/dbx)配置连接。查询默认只读并限制规模和时间，实际支持以本机能力检查为准。
 
 ## Harness 的工作闭环
 
