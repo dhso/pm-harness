@@ -4,17 +4,11 @@
 
 `project/schedule.json` 是唯一结构化时间事实源。`project/gantt.md` 是自动生成视图。`schedule.baseline` 保存 revision、当前基线字段 digest、批准人、批准时间和关联变更请求。
 
-每个任务和里程碑至少包含：
-
-- `id`、`title`、`status`、`owner`；
-- `baseline_start/end`、`forecast_start/end`、`actual_start/end`；
-- `dependency_ids`、`requirement_ids`、`deliverable_ids`；
-- `progress`、`next_action`、`updated_at`；
-- 完成时的 `evidence`。
+字段、默认值和状态转换按本次操作的紧凑契约查询，不另维护字段清单。
 
 ## 更新时间
 
-- 初始 baseline 可先作为草稿整体准备，再一次批准。baseline 批准后，新增、修改或删除任何基线事项都必须关联具有相同目标、审批范围和精确 before/after 的已批准变更请求。
+- 初始 baseline 先作草稿整体准备，用户确认有效计划批准后一次设立。baseline 批准后，新增、修改或删除任何基线事项都必须关联具有相同目标、审批范围和精确 before/after 的已批准变更请求。
 - 同一批准或同一逻辑变更涉及多个计划条目时，使用 `schedule.batch-upsert` 一次预演、一次提交；不要循环调用 `schedule.upsert`。批量操作全部校验成功才写入，并只产生一个 baseline revision 和一条受控变更记录。
 - 日常字段变化可更新 forecast、actual、progress 和 next action；状态变化使用 `schedule.transition` 并提供真实 `occurred_at`，不得用录入时间静默猜测实际发生时间。
 - `forecast_end` 晚于 `baseline_end` 时保留偏差，不移动 baseline 掩盖延期。

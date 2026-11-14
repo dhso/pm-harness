@@ -20,8 +20,6 @@ officecli get report.docx '/body/p[1]' --depth 2 --json
 - 替换文本：优先使用 `set <文件> / --find <文本> --replace <文本>`；需要保留修订时指定修订作者。
 - 复杂或不支持的结构：先 `dump` 保存可回放批量 JSON，再谨慎使用 `raw`/`raw-set`。
 
-## 检查
+## 修改后检查
 
 完成后运行 `officecli validate report.docx` 和 `officecli view report.docx issues`。视觉要求高时生成 HTML 或 PDF 预览，并确认分页、标题层级、表格和图片没有异常。
-
-路径使用 1 基索引；含括号的路径必须加引号。已批准的 Word 文件不得原地覆盖，修订要建立新版本和替代关系。

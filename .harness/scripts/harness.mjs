@@ -9,6 +9,7 @@ import {
   buildDailyBrief,
   compensateLastOperation,
   describeOperationContract,
+  findLatestUndoableOperation,
   initializeProject,
   lintWorkspace,
   maintainWorkspace,
@@ -93,7 +94,7 @@ const USAGE = {
   lint: "harness.mjs lint [--fast] [--json] — 校验工作区",
   brief: "harness.mjs brief — 生成每日项目工作简报",
   maintain: "harness.mjs maintain — 执行完整维护与哈希检查",
-  undo: "harness.mjs undo <operation_id> [--dry-run|--confirmed-at <ISO-8601>] [--compact] — 追加补偿操作，撤销最近一次可撤销写入；实际执行需要用户确认时间",
+  undo: "harness.mjs undo <operation_id>|--latest --dry-run [--confirmed-at <ISO-8601>] [--compact] — 追加补偿操作，撤销最近一次可撤销写入；--latest 只能预演，目标 ID 见结果的 compensation.compensated_operation_id；实际执行需要用户确认时间",
   init: "harness.mjs init [--data '<json>'|--input <file>|stdin] — 兼容的项目初始化入口",
   "source-add": "harness.mjs source-add [--data '<json>'|--input <file>|stdin] — 兼容的来源登记入口",
   "activity-add": "harness.mjs activity-add [--data '<json>'|--input <file>|stdin] — 兼容的活动登记入口",
@@ -107,7 +108,7 @@ if (hasFlag("--help") || hasFlag("-h") || command === "help") {
   const extra = topic === "record"
     ? { envelope_required: ["schema_version", "operation_id", "type", "actor", "reason", "source_ids", "payload"], hint: "记录字段放在 payload 内；用 contract <type> 查具体字段" }
     : topic === "undo"
-      ? { refusals: ["user_confirmation_required", "controlled_change_not_compensatable", "not_latest_operation", "operation_not_found", "compensation_snapshot_missing", "operation_not_compensatable", "compensation_conflict"], hint: "先用 --dry-run 展示影响；用户确认后用 --confirmed-at 传入确认发生的 ISO 8601 时间" }
+      ? { refusals: ["user_confirmation_required", "controlled_change_not_compensatable", "not_latest_operation", "operation_not_found", "compensation_snapshot_missing", "operation_not_compensatable", "compensation_conflict", "latest_requires_dry_run", "no_undoable_operation"], hint: "先用 --dry-run 展示影响；用户确认后用 --confirmed-at 传入确认发生的 ISO 8601 时间" }
       : {};
   if (USAGE[topic]) print({ ok: true, usage: USAGE[topic], ...extra });
   else print({ ok: true, commands: Object.keys(USAGE), usage: "harness.mjs <command> --help 查看单个命令用法" });
@@ -134,8 +135,10 @@ try {
     print(await maintainWorkspace(root));
   } else if (command === "undo") {
     const positional = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;
-    const operationId = positional || flagValue("--operation-id");
-    if (!operationId) throw new Error(JSON.stringify({ code: "operation_id_required", fix: "Use undo <operation_id>" }));
+    const explicitId = positional || flagValue("--operation-id");
+    if (!explicitId && hasFlag("--latest") && !hasFlag("--dry-run")) throw new Error(JSON.stringify({ code: "latest_requires_dry_run", fix: "先用 undo --latest --dry-run 预演并取得 operation_id，用户确认后再用该 ID 执行，避免确认后目标已变化" }));
+    const operationId = explicitId || (hasFlag("--latest") ? (await findLatestUndoableOperation(root)).operation_id : null);
+    if (!operationId) throw new Error(JSON.stringify({ code: "operation_id_required", fix: "Use undo <operation_id>，或 undo --latest --dry-run 查找最近一次可撤销写入" }));
     print(await compensateLastOperation(root, operationId, { dryRun: hasFlag("--dry-run"), confirmedByUserAt: flagValue("--confirmed-at") }));
   } else if (command === "init") {
     print(await initializeProject(root, await loadInput(root)));

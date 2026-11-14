@@ -10,28 +10,23 @@ metadata:
 
 # 处理 Office 文件
 
-OfficeCLI 用于处理 `.docx`、`.xlsx` 和 `.pptx`，不依赖本机安装 Office。交付物目的、版本和生命周期仍由 `pm-deliverable` 负责。
+OfficeCLI 处理 `.docx`、`.xlsx`、`.pptx`，不依赖本机 Office；交付物目的、版本和生命周期由 `pm-deliverable` 负责。目录与依赖按 `AGENTS.md` 的工具运行参考执行。
 
 ## 使用前
 
-- 先检查 `officecli --version` 命令缺失时，先取得安装或升级授权，再运行 `npm install --global @officecli/officecli` 安装。
+- 检查 `officecli --version`；缺失时停止依赖该工具的操作，取得安装授权后才运行 `npm install --global @officecli/officecli`，再复查版本。
 - 不确定命令、路径或属性名称时，先运行 `officecli help` 或 `officecli help <格式> <元素>`，不要猜测。
-- 优先使用分层策略：L1 读取/检查，L2 DOM 编辑，L3 原始 XML；只有上一层无法表达需求时才降级。
-- 长流程可用 `open` 和 `close` 保持驻留；交给其他程序读取前必须 `save` 或 `close`。
-- 产生临时产物前，按 `AGENTS.md` 创建任务沙箱 `tmp/tasks/<task-key>/`。
-- 从项目根调用 OfficeCLI 及其辅助命令，将输入、候选文件和临时输出显式指向任务沙箱；不要切换到任务沙箱安装或运行可复用依赖。
-- OfficeCLI 从已有 `PATH` 调用；辅助工具依赖按 `AGENTS.md` 放置，不得进入任务沙箱。OfficeCLI 缺失时停止，不得自动安装。
 
 ## 标准流程
 
-1. 用 `view` 检查结构、文本和 issues，必要时用 `get` 或 `query` 精确定位。
-2. 以任务沙箱内的候选文件为目标，用 `create`、`add`、`set`、`move`、`swap` 或 `remove` 创建和修改。
-3. 多项变更优先使用 `batch`。
-4. 用 `validate` 和/或 `view <文件> issues` 检查结构、内容与格式。
-5. 将预览和检查文件写入任务沙箱。
-6. 将需保留的 Office 文件移入 `deliverables/current/`。
-7. 将正式文件路径和检查结果交回 `pm-deliverable` 登记。
-8. 按 `AGENTS.md` 清理当前任务沙箱。
+```text
+view 结构/文本/issues → 必要时 get/query 定位
+if 仅需读取/检查: 返回必要内容、来源位置和读取限制
+else: 将文件、修改要求与所选格式交给「编辑流程」
+      → 取得文件路径、检查结果和未解决事项，交回主工作流
+```
+
+创建或修改时读取[编辑流程](references/editing.md)；文件和生命周期由主工作流继续处理，不由本能力声称批准、交付或验收。
 
 `officecli` 的路径通常从 `/` 开始；元素路径使用 1 基索引，`--index` 通常为 0 基索引。含 `[1]` 等括号的路径必须加引号。属性统一通过 `--prop` 传入，不要使用未定义的顶层参数。优先使用稳定的 `@id=` 或 `@name=` 路径，避免插入或删除后位置索引漂移。
 
@@ -40,14 +35,6 @@ OfficeCLI 用于处理 `.docx`、`.xlsx` 和 `.pptx`，不依赖本机安装 Off
 - Word（DOCX）：读取[Word 参考](references/word.md)。
 - PowerPoint（PPTX）：读取[PowerPoint 参考](references/pptx.md)。
 - Excel（XLSX）：读取[Excel 参考](references/xlsx.md)。
-
-## 安全与质量
-
-- 修改前确认目标文件未被 Word/WPS/Excel/PowerPoint 占用；不要覆盖用户原始文件或已批准版本。
-- 批量操作默认应保持原子性；失败时检查 JSON 错误，不用相同输入无限重试。只有用户明确接受部分成功时才使用 `--best-effort`。
-- `raw`/`raw-set` 只在 L2 无法满足需求时使用；修改前先读取对应 XML part，并保留可回滚的版本链。
-- `view`/`get`/`query` 能读取驻留中的最新编辑；交给 Python、Office、渲染器或上传程序前执行 `save` 或 `close`。
-- OfficeCLI 只负责文件内容；批准、交付和验收状态由 `pm-deliverable` 记录。
 
 ## 专用能力
 

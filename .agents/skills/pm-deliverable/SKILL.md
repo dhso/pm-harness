@@ -9,23 +9,19 @@ metadata:
 
 # 创建和管理交付物
 
-读取 `.harness/references/deliverable-policy.md`、项目上下文、相关来源和验收标准。
+读取 `.harness/references/deliverable-policy.md` 及本次相关上下文、来源和验收标准。重要创建工作先明确目的、受众、场景、格式、期限、必需信息和评审标准；局部修改复用已有约定，缺口按 `AGENTS.md` 澄清。
 
-开始重要创建工作前，确认目的、受众、使用场景、格式、截止时间、必需信息或数据以及评审标准。先查 `query preference --where scope=document`，按已确认偏好决定结构和格式。使用 `templates/` 中最接近的模板作为内容脚手架，并按实际需要调整。
+复用已确认文档偏好，需要补查时用 `query preference --where scope=document`；选择最接近的模板并按需调整。
 
-正式报告使用 `pm-communication` 组织叙述；本 Skill 负责文件、版本、评审和交付生命周期。
+| 条件 | 加载 |
+|---|---|
+| 正式报告的叙述 | 将事实、受众与目的交给 `pm-communication`，取得文稿后由本流程继续制作文件 |
+| DOCX、XLSX、PPTX 文件处理与校验 | [officecli](../officecli/SKILL.md) |
+| 外部正文、页面、图表或附件 | [说人话与保真](../pm-communication/references/plain-language.md)，不为表达复核额外加载整套沟通工作流 |
 
-- 在初稿之前或同时登记交付物。
-- 可评审或继续使用的文件必须进入 `deliverables/current/`。
-- 使用清晰稳定的文件名并递增版本。
-- 不得覆盖已批准的终稿。
-
-涉及 DOCX、XLSX 或 PPTX 时，使用 [officecli](../officecli/SKILL.md) 处理文件和格式校验。
-
-交付物面向外部受众时，使用 `pm-communication` 的对外表达规则复核正文、页面、图表和附件。
-
-按 `deliverable-policy.md` 更新生命周期；创建、批准、交付和验收分别记录，已批准内容通过新版本和替代链演进。
-
-用户表达文档结构、命名或格式偏好时，用 `memory.preference.upsert` 记下并回述记住了什么。
+```text
+初稿前或同时登记 → 创建/修改 → 检查 → 保存可评审或继续使用的文件
+→ 按 deliverable-policy.md 记录生命周期 → 按 AGENTS.md 收尾
+```
 
 收尾时报告文件路径、已执行的检查、当前生命周期状态、剩余评审行动和索引更新。

@@ -206,6 +206,31 @@ test("CLI undo uses compensation without requiring a Git repository", async () =
   assert.equal((await readJson(root, "activity/log.json")).entries.length, 0);
 });
 
+test("CLI undo --latest only previews the newest undoable write and never commits", async () => {
+  const root = await workspace();
+  const script = path.join(root, ".harness/scripts/harness.mjs");
+  const run = (...args) => {
+    try {
+      return { code: 0, body: JSON.parse(execFileSync(process.execPath, [script, "undo", ...args, "--compact"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })) };
+    } catch (error) {
+      return { code: error.status, body: JSON.parse(String(error.stdout || error.stderr)) };
+    }
+  };
+  assert.equal(run("--latest", "--dry-run").body.error.code, "no_undoable_operation");
+  const first = await recordOperation(root, operation("activity.record", activityPayload("First")));
+  const second = await recordOperation(root, operation("activity.record", activityPayload("Second")));
+  const preview = run("--latest", "--dry-run");
+  assert.equal(preview.body.dry_run, true);
+  assert.equal(preview.body.compensation.compensated_operation_id, second.operation_id);
+  assert.equal((await readJson(root, "activity/log.json")).entries.length, 2);
+  const direct = run("--latest", "--confirmed-at", new Date().toISOString());
+  assert.equal(direct.body.error.code, "latest_requires_dry_run");
+  assert.equal((await readJson(root, "activity/log.json")).entries.length, 2);
+  assert.equal(run("--latest").body.error.code, "latest_requires_dry_run");
+  assert.equal(run(second.operation_id, "--confirmed-at", new Date().toISOString()).body.ok, true);
+  assert.equal(run("--latest", "--dry-run").body.compensation.compensated_operation_id, first.operation_id);
+});
+
 test("the workspace lock covers read, validation, mutation, and transaction commit", async () => {
   const root = await workspace();
   const inputPath = path.join(root, "tmp/harness/large-source.bin");

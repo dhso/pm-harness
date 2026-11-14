@@ -1,6 +1,6 @@
 ---
 name: pm-maintain
-description: 审计项目管理 Harness，修复安全的索引漂移，整理记忆，并提出有证据支持的规则改进。重大里程碑、重复纠正、发现不一致或明确要求审计时使用。
+description: 维护 PM 工作区的索引、记忆和规则，或撤销最近一次项目写入。用于里程碑收尾、重复纠正或一致性审计；Harness 代码开发与评审按代码任务处理。
 metadata:
   kind: workflow
   domain: maintain
@@ -8,22 +8,22 @@ metadata:
 
 # 维护和演进 Harness
 
-读取 `.harness/references/evolution-policy.md`、生效规则、观察记录和最近的 lint 输出。
+```text
+if 撤销最近一次项目写入: 执行「撤销流程」→ 取得补偿结果
+else: node .harness/scripts/harness.mjs maintain → 按发现交接
+汇总子流程结果 → 统一收尾
+```
 
-按照 `.harness/references/automation.md` 运行一次 `maintain`。只修复安全的机械漂移，不靠猜测解决语义冲突，也不启动重试或监听循环。
+撤销分支读取[撤销流程](references/undo.md)，完成后进入统一收尾，不进入下方常规维护分流。常规维护命令只运行一次；以下条件可组合，交接维护输出及相关对象：
 
-检查观察记录中的重复失败模式。规则提案必须引用证据、说明适用范围、解释收益和副作用，并定义后续如何验证效果。新增规则前先去重或收窄提案。
+| 发现或任务 | 处理 |
+|---|---|
+| 待处置提案、到期规则或重复失败 | [规则提案](../../../.harness/references/evolution-policy.md#规则提案) |
+| `preferences_over_budget` | [偏好整理](../../../.harness/references/evolution-policy.md#偏好) |
+| 当前记忆过期或记忆整理 | [记忆整理](../../../.harness/references/evolution-policy.md#记忆) |
+| 无效或重复的未批准变更草案 | [变更控制](../../../.harness/references/change-control.md)中的技术作废流程 |
+| 维护失败或接口/输出不明 | [自动化接口](../../../.harness/references/automation.md)；只继续可安全完成的部分 |
 
-整理记忆时从 `maintain` 和 lint 的输出取对象，不凭印象找：
+`pending_proposals` 是待处置提案发现入口；`pending_proposals_complete=false` 时报告发现不完整，不把空数组当作没有提案。到期规则看 `rule_reviews_due`。
 
-1. `pending_proposals` 和 `rule_reviews_due` 列出待处置提案与到期规则；`pending_proposals_complete=false` 时先报告发现不完整，不得把空数组解释为没有提案。逐条与用户确认后 `rule.activate`、`rule.reject` 或 `rule.retire`，不留悬空提案。
-2. 已解决的观察用 `observation.record` 转为 `resolved` 或 `dismissed`。
-3. lint 报 `preferences_over_budget` 时用 `query preference` 通读，把语义重叠的条目合并为一条并退役其余；`memory/current.md` 过期时按当前事实更新，不编造内容消除告警。
-
-规则激活、基线修复、大范围删除或记忆冲突解决必须在对话中呈现并获得批准；批准后通过类型化操作应用并设置复查条件。
-
-## 撤销最近一次写入
-
-按已读取的自动化参考先预演并说明影响，取得确认后再补偿。不能补偿时按返回的 `code` 和 `fix` 正向修正；不删除操作历史或归档原件。
-
-旧版本留下的无效或重复未批准草案按 `.harness/references/change-control.md` 技术作废，不表述为业务驳回。
+子流程返回已处置对象、检查结果和待决定事项。本流程按 `AGENTS.md` 统一汇报与收尾，复用本次检查结果，不再次触发自身。

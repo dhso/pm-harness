@@ -104,12 +104,12 @@ test("base template rebuilds, passes lint, uses LF, and has real Skills", async 
   assert.equal((await readJson(root, "activity/log.json")).schema_version, SCHEMA_VERSION);
   for (const relative of ["AGENTS.md", ".harness/lib/core.mjs", "project/schedule.json"]) assert.ok(!(await readFile(path.join(root, relative), "utf8")).includes("\r\n"));
   const agentRules = await readFile(path.join(root, "AGENTS.md"), "utf8");
-  assert.match(agentRules, /以下路径均相对于.*项目根/);
-  assert.match(agentRules, /`tmp\/tasks\/<task-key>\//);
-  assert.match(agentRules, /`tmp\/harness\//);
-  assert.match(agentRules, /工作目录必须是项目根/);
-  assert.match(agentRules, /npm、pip 下载缓存.*默认的用户级缓存/);
-  assert.match(agentRules, /依赖与缓存按下表放置/);
+  for (const [, target] of agentRules.matchAll(/\]\(([^)]+)\)/g)) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) continue;
+    assert.ok((await readFile(path.resolve(root, target.split("#")[0]), "utf8")).trim(), `empty reference: ${target}`);
+  }
+  assert.match(agentRules, /\]\(DEV\.md\)/, "AGENTS.md must route Harness development to DEV.md");
+  assert.ok((await readFile(path.join(root, "DEV.md"), "utf8")).trim(), "DEV.md ships with the template");
   assert.doesNotMatch(agentRules, /<(?:harness_root|harness_tmp|harness_cache|tmp)_dir>|\.harness\/(?:tmp|cache)/);
   const ignored = (await readFile(path.join(root, ".gitignore"), "utf8")).split("\n");
   assert.ok(ignored.includes("/tmp/"));
@@ -162,8 +162,9 @@ test("PM Skills have valid identities, routing metadata, and resolvable progress
     assert.ok(["router", "workflow", "capability"].includes(kind));
     assert.ok(domain);
     assert.ok(!content.includes("[TODO:"));
-    for (const match of content.matchAll(/\]\((references\/[^)]+)\)/g)) {
-      assert.ok((await readFile(path.join(skillRoot, match[1]), "utf8")).trim());
+    for (const [, target] of content.matchAll(/\]\(([^)]+)\)/g)) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("#")) continue;
+      assert.ok((await readFile(path.resolve(skillRoot, target.split("#")[0]), "utf8")).trim(), `empty reference: ${target}`);
     }
   }
 });
@@ -397,7 +398,7 @@ test("daily brief keeps triaged inbox work visible until it is applied", async (
   assert.ok(brief.inbox.some((item) => item.id === "INB-001" && item.status === "triaged"));
 });
 
-test("activities use project timezone and daily brief includes recent work with at most three reasons", async () => {
+test("activities use project timezone and daily brief separates overdue work from routine actions", async () => {
   const root = await workspace();
   await initialize(root, "Daily brief");
   const task = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Late task", owner: "PM", forecast_end: "2026-09-08", next_action: "Recover" }));
@@ -407,8 +408,9 @@ test("activities use project timezone and daily brief includes recent work with 
   const brief = await buildDailyBrief(root, new Date("2026-09-09T02:00:00Z"));
   assert.equal(brief.recent_activity.length, 1);
   assert.ok(brief.overdue.some((item) => item.id === task.schedule_item.id));
+  assert.ok(brief.attention_actions.some((item) => item.id === task.schedule_item.id));
   assert.ok(brief.top_actions.length <= 3);
-  assert.ok(brief.top_actions.every((item) => item.reason));
+  assert.ok([...brief.attention_actions, ...brief.top_actions].every((item) => item.reason));
 });
 
 test("daily brief prioritizes structured high risks when no urgent task outranks them", async () => {
@@ -416,8 +418,136 @@ test("daily brief prioritizes structured high risks when no urgent task outranks
   await initialize(root, "Risk brief");
   await recordOperation(root, operation("register.upsert", { collection: "risks", title: "Vendor outage", description: "Critical dependency may fail", owner: "PM", probability: "high", impact: "high", trigger: "Vendor misses readiness check", response: "Prepare fallback", response_due: "2026-09-10", next_review: "2026-09-09", source_ids: [] }));
   const brief = await buildDailyBrief(root, new Date("2026-09-09T02:00:00Z"));
-  assert.equal(brief.top_actions[0].kind, "risk");
+  assert.equal(brief.attention_actions[0].kind, "risk");
+  assert.equal(brief.top_actions.length, 0);
   assert.equal(brief.priority_risks[0].id, "RISK-001");
+});
+
+test("daily brief lists every open or monitored issue in its own lane and skips handled ones", async () => {
+  const root = await workspace();
+  await initialize(root, "Issue brief");
+  const open = await recordOperation(root, operation("register.upsert", { collection: "issues", title: "Export fails", description: "Customer cannot export", owner: "PM" }));
+  const monitored = await recordOperation(root, operation("register.upsert", { collection: "issues", title: "Slow import", description: "Under observation", owner: "PM", status: "monitoring" }));
+  for (const status of ["mitigated", "accepted", "resolved", "closed"]) {
+    await recordOperation(root, operation("register.upsert", { collection: "issues", title: `${status} issue`, description: "Already handled", owner: "PM", status, resolution: "Fixed and checked" }));
+  }
+  const brief = await buildDailyBrief(root, new Date("2026-09-09T02:00:00Z"));
+  assert.deepEqual(brief.open_issues.map((item) => item.id), [open.issue.id, monitored.issue.id]);
+  assert.deepEqual(brief.issue_actions.map((item) => item.id), [open.issue.id, monitored.issue.id]);
+  assert.ok(brief.issue_actions.every((item) => item.kind === "issue" && item.reason));
+  assert.equal(brief.issue_actions[0].target_date, null);
+  assert.equal(brief.top_actions.length, 0);
+});
+
+test("daily brief recommends upcoming milestones using forecast then baseline within the project date window", async () => {
+  const root = await workspace();
+  await initialize(root, "Milestone brief");
+  // UTC is still September 8; Hong Kong is September 9 and the seven-day window ends September 16.
+  const now = new Date("2026-09-08T16:30:00Z");
+  const forecast = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Forecast supersedes old date", owner: "PM", baseline_end: "2026-09-08", forecast_end: "2026-09-16" }));
+  const baseline = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Baseline only", owner: "PM", baseline_end: "2026-09-12" }));
+  const outside = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Outside window", owner: "PM", baseline_end: "2026-09-10", forecast_end: "2026-09-17" }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Cancelled", status: "cancelled", forecast_end: "2026-09-09" }));
+  await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Done", status: "done", forecast_end: "2026-09-09", actual_start: "2026-09-08", actual_end: "2026-09-09", evidence: "Completed" }));
+  const brief = await buildDailyBrief(root, now);
+  assert.equal(brief.today, "2026-09-09");
+  assert.deepEqual(brief.top_actions.map((item) => item.id), [baseline.schedule_item.id, forecast.schedule_item.id]);
+  assert.deepEqual(brief.top_actions.map((item) => item.target_date), ["2026-09-12", "2026-09-16"]);
+  assert.ok(brief.top_actions.every((item) => item.kind === "milestone" && item.reason));
+  assert.ok(!brief.milestones.some((item) => item.id === outside.schedule_item.id));
+});
+
+test("urgent milestones and overdue tasks never displace issues or routine actions", async () => {
+  const now = new Date("2026-09-09T02:00:00Z");
+  for (const record of [
+    { forecast_end: "2026-09-09" },
+    { forecast_end: "2026-09-08" },
+    { forecast_end: "2026-09-16", status: "blocked" },
+  ]) {
+    const root = await workspace();
+    await initialize(root, "Competing actions");
+    for (let index = 0; index < 3; index += 1) {
+      await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: `Late task ${index}`, owner: "PM", forecast_end: "2026-09-08" }));
+    }
+    const issue = await recordOperation(root, operation("register.upsert", { collection: "issues", title: "Release problem", description: "Investigate release failure", owner: "PM" }));
+    const milestone = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Customer review", owner: "PM", ...record }));
+    const brief = await buildDailyBrief(root, now);
+    assert.equal(brief.attention_actions.length, 4);
+    assert.equal(brief.attention_actions[0].id, milestone.schedule_item.id);
+    assert.equal(brief.attention_actions[0].kind, "milestone");
+    assert.equal(brief.attention_actions.filter((item) => item.kind === "overdue_task").length, 3);
+    assert.deepEqual(brief.issue_actions.map((item) => item.id), [issue.issue.id]);
+    assert.equal(brief.top_actions.length, 0);
+    const ids = [...brief.attention_actions, ...brief.top_actions, ...brief.issue_actions].map((item) => item.id);
+    assert.equal(new Set(ids).size, ids.length);
+  }
+});
+
+test("issues cannot crowd out routine actions, risks or urgent work, and every lane is deduplicated", async () => {
+  const root = await workspace();
+  await initialize(root, "Separate action lanes");
+  for (let index = 0; index < 5; index += 1) {
+    await recordOperation(root, operation("register.upsert", { collection: "issues", title: `Routine issue ${index}`, description: "Follow-up under monitoring", status: "monitoring", owner: "PM" }));
+  }
+  const blocked = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Release blocked and overdue", status: "blocked", owner: "PM", forecast_end: "2026-09-08" }));
+  const today = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Due today", owner: "PM", forecast_end: "2026-09-09" }));
+  const milestone = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Blocked without a date", status: "blocked", owner: "PM" }));
+  const soonMilestone = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Go-live in two days", owner: "PM", forecast_end: "2026-09-11" }));
+  const soonTask = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Due this week", owner: "PM", forecast_end: "2026-09-12" }));
+  const risk = await recordOperation(root, operation("register.upsert", { collection: "risks", title: "Outage risk", description: "Prepare fallback", owner: "PM", probability: "high", impact: "high" }));
+  const reviewRisk = await recordOperation(root, operation("register.upsert", { collection: "risks", title: "Review due", description: "Check mitigation", owner: "PM", probability: "low", impact: "low", next_review: "2026-09-09" }));
+  await recordOperation(root, operation("register.upsert", { collection: "risks", title: "Monitor only", description: "No response currently due", owner: "PM", probability: "low", impact: "low" }));
+  const delivery = await recordOperation(root, operation("deliverable.upsert", { title: "Report due today", type: "report", format: "md", version: "v01", audience: "Sponsor", purpose: "Review", due_at: "2026-09-09" }));
+  const brief = await buildDailyBrief(root, new Date("2026-09-09T02:00:00Z"));
+  assert.equal(brief.issue_actions.length, 5, "every open issue stays visible");
+  assert.deepEqual(brief.top_actions.map((item) => item.id), [soonMilestone.schedule_item.id, soonTask.schedule_item.id]);
+  assert.deepEqual(new Set(brief.attention_actions.map((item) => item.id)), new Set([blocked.schedule_item.id, today.schedule_item.id, milestone.schedule_item.id, risk.risk.id, reviewRisk.risk.id, delivery.deliverable.id]));
+  const ids = [...brief.attention_actions, ...brief.top_actions, ...brief.issue_actions].map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(brief.open_risks.length, 3);
+  assert.equal(brief.open_issues.length, 5);
+  assert.equal(brief.attention_summary.total, brief.attention_actions.length);
+  assert.deepEqual(brief.attention_summary.by_kind, { milestone: 1, blocked_task: 1, due_soon: 1, risk: 2, deliverable: 1 });
+});
+
+test("routine actions keep their three-item limit and order commitments, dependencies, milestones and tasks before anything else", async () => {
+  const root = await workspace();
+  await initialize(root, "Routine order");
+  const now = new Date("2026-09-09T02:00:00Z");
+  const first = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Upstream", owner: "PM", forecast_end: "2026-09-20" }));
+  const dependent = await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title: "Dependent", owner: "PM", forecast_end: "2026-09-25", dependency_ids: [first.schedule_item.id] }));
+  const milestone = await recordOperation(root, operation("schedule.upsert", { collection: "milestones", title: "Demo", owner: "PM", forecast_end: "2026-09-12" }));
+  for (const title of ["Task A", "Task B", "Task C"]) {
+    await recordOperation(root, operation("schedule.upsert", { collection: "tasks", title, owner: "PM", forecast_end: "2026-09-13" }));
+  }
+  const brief = await buildDailyBrief(root, now);
+  assert.equal(brief.top_actions.length, 3);
+  assert.deepEqual(brief.top_actions.map((item) => item.kind), ["dependency", "milestone", "due_soon"]);
+  assert.equal(brief.top_actions[0].id, dependent.schedule_item.id);
+  assert.equal(brief.top_actions[1].id, milestone.schedule_item.id);
+});
+
+test("a delivered deliverable stops raising a due-date alert while an approved one still does", async () => {
+  const root = await workspace();
+  await initialize(root, "Delivery brief");
+  const approver = (await stakeholder(root, ["deliverable", "acceptance"])).stakeholder;
+  await mkdir(path.join(root, "deliverables/current"), { recursive: true });
+  const make = async (title, file) => {
+    await writeFile(path.join(root, "deliverables/current", file), `# ${title}\n`, "utf8");
+    const created = await recordOperation(root, operation("deliverable.upsert", { title, type: "status_report", format: "md", version: "v01", status: "requested", path: `deliverables/current/${file}`, audience: "Sponsor", purpose: "Decision", requirement_ids: [], source_ids: [], acceptance_criteria: ["Accurate"], reviewers: [], due_at: "2026-09-01" }));
+    const id = created.deliverable.id;
+    await recordOperation(root, operation("deliverable.transition", { id, status: "drafting" }));
+    await recordOperation(root, operation("deliverable.transition", { id, status: "review", completed_at: minutesAgo(5) }));
+    await recordOperation(root, operation("deliverable.transition", { id, status: "approved" }, { approval: businessApproval(approver.id) }));
+    return id;
+  };
+  const approved = await make("Approved only", "approved-v01.md");
+  const delivered = await make("Already delivered", "delivered-v01.md");
+  await recordOperation(root, operation("deliverable.transition", { id: delivered, status: "delivered", delivered_at: new Date().toISOString() }));
+  // 简报日期固定，不依赖真实时钟；写入时间只用于满足审批、交付的先后校验。
+  const brief = await buildDailyBrief(root, new Date("2026-09-09T02:00:00Z"));
+  assert.deepEqual(brief.attention_actions.filter((item) => item.kind === "deliverable").map((item) => item.id), [approved]);
+  assert.ok(brief.awaiting_delivery_or_acceptance.some((item) => item.id === delivered));
 });
 
 test("deliverable transitions enforce authority, chronology, immutable approved content, and supersession cycles", async () => {

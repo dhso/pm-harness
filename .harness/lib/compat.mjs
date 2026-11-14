@@ -2,6 +2,7 @@ import { SCHEMA_VERSION, makeOperationId } from "./model.mjs";
 import { localDate, normalizeArray, safeWorkspaceInputPath, sha256Path } from "./helpers.mjs";
 import { readWorkspace } from "./workspace.mjs";
 import { recordOperation } from "./operations.mjs";
+import { latestEffectiveOperation } from "./compensation.mjs";
 
 function splitPayload(input) {
   const { operation_id, actor, reason, ...payload } = input;
@@ -25,6 +26,13 @@ export async function initializeProject(root, input) {
   const { operation_id, actor, reason, payload } = splitPayload(input);
   const result = await recordOperation(root, { schema_version: SCHEMA_VERSION, operation_id: operation_id || makeOperationId("project.initialize", payload), type: "project.initialize", actor: actor || { kind: "agent" }, reason: reason || "初始化项目", source_ids: [], payload });
   return result.project;
+}
+
+// 只读查找最近一次尚未撤销的写入，供 `undo --latest` 使用；真正的补偿仍走预演、确认和全部护栏。
+export async function findLatestUndoableOperation(root) {
+  const latest = latestEffectiveOperation((await readWorkspace(root)).changes.operations || []);
+  if (!latest) throw new Error(JSON.stringify({ code: "no_undoable_operation", fix: "没有可撤销的写入；如需恢复事实请正向修正" }));
+  return { operation_id: latest.operation_id, type: latest.type, recorded_at: latest.recorded_at, target_ids: latest.target_ids || [] };
 }
 
 export async function compensateLastOperation(root, operationId, options = {}) {

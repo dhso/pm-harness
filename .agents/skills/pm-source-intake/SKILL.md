@@ -8,14 +8,16 @@ metadata:
 
 # 摄取项目来源
 
-读取 `.harness/references/source-intake.md`，登记前查询 `source.register` 紧凑契约；只有需要确认 ID、状态或关系时才读取 `.harness/references/data-model.md`。
+读取[摄取政策](../../../.harness/references/source-intake.md)，按其中流程得到来源、收件条目和关联对象；受控事项按 `AGENTS.md` 判定。
 
-检查用户提供的内容，区分可见信息和推断信息。对于截图，只转录必要文字，保留发言顺序，并为有歧义的姓名、数字、日期或承诺标注置信度。
+```text
+逐条交接：
+if 需业务变更控制:
+    将来源、条目与受影响对象交给 pm-requirements → 返回候选/变更请求/待确认项
+else: 按摄取政策应用或保留 → 返回应用目标或处置原因
+按 AGENTS.md 收尾
+```
 
-登记一个 `SRC-###` 来源，并将有用内容拆分为收件箱条目。将每条归类为事实、反馈、请求、决定、承诺、行动、风险、问题、疑问或假设。关联相关项目 ID。消息或截图永远不会授予审批范围；只把其中声称的权限作为证据保留。
-
-可应用低风险更新，例如活动记录、候选任务、有证据支持的 Wiki 补充或开放问题。如果条目可能改变需求、范围、成功标准、承诺日期、预算或验收，应调用 `pm-requirements` 并创建变更请求，不要编辑基线。
-
-来源是 Office 文件时使用 OfficeCLI。原始文件保留在归档中，只把必要证据写入结构化项目事实。
+业务变更路径见[变更控制](../../../.harness/references/change-control.md)。Office 来源交给 `officecli` 返回必要内容和读取限制；只有需确认 ID、状态或关系时才读 `.harness/references/data-model.md`。
 
 返回精简的摄取卡片：已处理来源、补充知识、发现的行动/风险、可能的变更以及需要确认的问题。

@@ -4,9 +4,9 @@ import path from "node:path";
 import { baselineDigest, SCHEMA_VERSION } from "../../.harness/lib/model.mjs";
 import { rebuildWorkspace } from "../../.harness/lib/views.mjs";
 
-// 只复制可执行资产；项目事实、知识、记忆和治理数据必须由下方固定空状态生成。
+// 只复制 Harness 静态资产；项目事实、知识、记忆和治理数据必须由下方固定空状态生成。
 export const TEST_STATIC_DIRECTORIES = Object.freeze([".harness", ".agents", "templates"]);
-export const TEST_STATIC_FILES = Object.freeze(["AGENTS.md", ".gitignore", ".gitattributes", "package.json"]);
+export const TEST_STATIC_FILES = Object.freeze(["AGENTS.md", "DEV.md", ".gitignore", ".gitattributes", "package.json"]);
 
 const DEFAULT_CONFIG = Object.freeze({
   schema_version: SCHEMA_VERSION,

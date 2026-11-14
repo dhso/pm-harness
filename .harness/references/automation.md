@@ -4,10 +4,7 @@
 
 ## 执行根与临时目录
 
-- 目录和依赖放置以 `AGENTS.md` 为准。Harness CLI 要求当前工作目录精确等于项目根；相对输入路径也按项目根解析。
-- `tmp/harness/` 只用于 Harness 内部操作，`tmp/tasks/<task-key>/` 只用于单次外部任务。
-- 包管理器使用默认用户级下载缓存；正式依赖放根依赖环境；任务沙箱不得包含依赖环境或包管理器缓存。
-- 任务结束只清理当前 `tmp/tasks/<task-key>/`，不清理 `tmp/harness/`、`tmp/tasks/` 或其他任务目录。
+执行根和清理边界见 `AGENTS.md`；外部工具与依赖按需读取[工具运行](tool-runtime.md)。Harness CLI 要求 cwd 精确等于项目根，相对输入路径也按项目根解析。
 
 含用户原文或长文本的 Harness 输入放在 `tmp/harness/`，完成后清理；执行工具能直接写 stdin 时也可通过 stdin 传入。失败时读取结构化错误并修正输入、补充审批或请求用户判断；不得绕过校验或无限重试。
 
@@ -79,11 +76,11 @@ node .harness/scripts/harness.mjs undo <operation_id> --confirmed-at <ISO-8601>
 
 - `query` 只读取目标事实源，并按 ID 或过滤条件返回单条/少量记录。集合名用单数或复数皆可（`task`/`tasks`）；只给 ID 时按前缀自动定位。字段拼错会返回候选，不会静默产生空结果。例：`query REQ-003 --fields status,title`、`query tasks --where status=blocked`。
 - `contract` 只返回一个操作的字段、必填项、默认值和状态转换；AI 优先使用 `--compact`。
-- `brief` 提供近期活动和不超过三个带原因的首要行动，不把完整 JSON 原样转给用户。
+- `brief` 把行动分为三组并跨组去重：`attention_actions`（需响应的风险与紧急工作，附 `attention_summary` 计数）、`top_actions`（常规行动，最多三项）和 `issue_actions`（open/monitoring 问题）。前后两组不设上限，不占常规额度；展示方式见 `pm-daily-brief`，不把完整 JSON 原样转给用户。
 - `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
 - `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照，并提示任务沙箱根目录中残留的依赖环境或包管理器缓存。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
 - `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。返回的 `pending_proposals` 是待处置规则提案的唯一发现入口（含证据条数与 `overdue`），`pending_proposals_complete` 表示本次发现是否完整；为 `false` 时不得把空数组解释为没有提案。`rule_reviews_due` 给出到期规则的保留/收窄/退役建议；两者都只报告事实，处置须由用户决定。
 - `status.update` 和 `memory.current.update` 用事务更新人读摘要；不要在事实 JSON 已提交后再用非事务方式覆盖这两个文件。
 - `lint` 会提示过大的结构化 Store。读取优先使用 `query --fields ... --limit ...`，不要把完整 JSON 复制进对话；压缩或归档必须保留事实、ID 和审计可追溯性。
-- `undo` 通过追加 `operation.compensate` 撤销最近一次可撤销写入，原操作始终保留。先用 `--dry-run` 展示将恢复或移除的事实及保留的归档原件；取得用户确认后用 `--confirmed-at` 传入确认发生的 ISO 8601 时间。实际执行缺少确认时间会被机器拒绝。受控变更、非最近有效操作、旧操作缺少补偿快照、目标发生后续冲突或操作写入人工文档内容时也会拒绝，按 `code` 和 `fix` 处理。原始归档不会被删除，结果中的 `retained_paths` 会明确列出。
+- `undo` 撤销最近一次可补偿写入；不知道 `operation_id` 时先用 `undo --latest --dry-run` 查找并预演（`--latest` 只能预演），用户确认后用返回的 ID 执行。用户要求撤销时读取[撤销流程](../../.agents/skills/pm-maintain/references/undo.md)。
 - 修改 `.harness/lib/model.mjs` 或 `.harness/lib/contracts.mjs` 的契约后运行 `npm run docs:contract` 重新生成参考。
