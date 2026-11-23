@@ -4,27 +4,23 @@ import path from "node:path";
 import {
   ARCHIVE_AVAILABILITY,
   ID_PATTERNS,
-  SCHEMA_VERSION,
   STATUS,
   baselineDigest,
   digestValue,
   isDate,
   isPlainObject,
   isTimestamp,
-  validateRecord,
 } from "./model.mjs";
 import {
   ageInDays,
   digestFields,
   isWorkspaceRelativePath,
   localDate,
-  sha256Path,
   text,
   validTimezone,
   walkMarkdown,
 } from "./helpers.mjs";
 import {
-  COLLECTIONS,
   DECISION_CONTROLLED_FIELDS,
   DELIVERABLE_IMMUTABLE_FIELDS,
   REQUIREMENT_IMMUTABLE_FIELDS,
@@ -36,9 +32,12 @@ import { generatedEntries } from "./views.mjs";
 import { addEnvironmentIssues } from "./environment.mjs";
 import { findDuplicateDraft, validateChangeProposal } from "./change-validation.mjs";
 import { validateWorkspaceContract } from "./contracts.mjs";
+import { checkContentHash, localFileStatus, missingFileReporter } from "./file-availability.mjs";
+import { modelCollections, workspaceShapeIssues } from "./workspace-shape.mjs";
 
-function addIssue(issues, level, code, relativePath, message, fix = null) {
-  issues.push({ level, code, path: relativePath, message, ...(fix ? { fix } : {}) });
+// scope 声明问题的影响范围：local 只影响所指对象，不应阻断无关的维护写入。
+function addIssue(issues, level, code, relativePath, message, fix = null, scope = null) {
+  issues.push({ level, code, path: relativePath, message, ...(fix ? { fix } : {}), ...(scope ? { scope } : {}) });
 }
 
 function validateDatePair(issues, record, startField, endField, relativePath) {
@@ -86,56 +85,27 @@ function timestampOrder(issues, record, fields, relativePath) {
   }
 }
 
-function modelCollections(data, issues) {
-  const allIds = new Set();
-  const byKind = {};
-  const ownersById = new Map();
-  for (const [store, collection, kind] of COLLECTIONS) {
-    const relativePath = STORE_FILES[store];
-    const records = data[store]?.[collection];
-    if (!Array.isArray(records)) {
-      addIssue(issues, "error", "invalid_collection", relativePath, `${collection} must be an array`);
-      byKind[kind] = [];
-      continue;
-    }
-    byKind[kind] = records;
-    const localIds = new Set();
-    for (const record of records) {
-      for (const issue of validateRecord(kind, record)) addIssue(issues, "error", issue.code, relativePath, issue.message);
-      if (record?.id && localIds.has(record.id)) addIssue(issues, "error", "duplicate_id", relativePath, `Duplicate ID: ${record.id}`);
-      if (record?.id) localIds.add(record.id);
-      if (record?.id) {
-        allIds.add(record.id);
-        if (!ownersById.has(record.id)) ownersById.set(record.id, []);
-        ownersById.get(record.id).push({ kind, relativePath });
-      }
-    }
+// 容器形状不可遍历时无法继续；记录字段错误只报告，不遮蔽其他诊断。
+// 深层检查崩溃时保留已发现的问题，并把崩溃本身作为阻断错误，不让异常吞掉全部结果。
+export async function collectIssues(root, data, options = {}) {
+  const structural = workspaceShapeIssues(data, { validateRecords: false });
+  if (structural.length) return structural;
+  const issues = workspaceShapeIssues(data);
+  try {
+    await inspectWorkspace(root, data, options, issues);
+  } catch (error) {
+    addIssue(issues, "error", "lint_check_incomplete", "workspace", `Some checks could not finish: ${error.message}`, "Fix the reported record errors, then rerun lint");
   }
-  for (const [id, owners] of ownersById) {
-    if (owners.length < 2) continue;
-    const kinds = owners.map((item) => item.kind).sort();
-    const allowedRulePair = owners.length === 2 && kinds[0] === "proposal" && kinds[1] === "rule";
-    if (!allowedRulePair) addIssue(issues, "error", "duplicate_id", owners.at(-1).relativePath, `Duplicate ID across workspace: ${id}`);
-  }
-  if (data.project.id) {
-    if (allIds.has(data.project.id)) addIssue(issues, "error", "duplicate_id", STORE_FILES.project, `Project ID duplicates another workspace ID: ${data.project.id}`);
-    allIds.add(data.project.id);
-  }
-  return { allIds, byKind };
+  return issues;
 }
 
-export async function collectIssues(root, data, options = {}) {
-  const issues = [];
+async function inspectWorkspace(root, data, options, issues) {
   const pendingPaths = new Set(options.pendingPaths || []);
+  const addMissingFileIssue = missingFileReporter(issues, options.fileTargetIds);
   // checkFiles 为旧调用方保留；新调用方应分别控制哈希与 Wiki 注册扫描。
   const checkContentHashes = options.checkContentHashes ?? options.checkFiles ?? true;
   const checkWikiRegistration = options.checkWikiRegistration ?? options.checkFiles ?? true;
   const exists = (relative) => pendingPaths.has(relative.split(path.sep).join("/")) || existsSync(path.join(root, relative));
-  for (const [key, relative] of Object.entries(STORE_FILES)) {
-    if (!isPlainObject(data[key])) addIssue(issues, "error", "invalid_store", relative, "Top-level store must be an object");
-    else if (data[key].schema_version !== SCHEMA_VERSION) addIssue(issues, "error", "schema_version", relative, `schema_version must be ${SCHEMA_VERSION}`, "Update the file to the current workspace contract before other writes");
-  }
-  if (issues.some((issue) => issue.code === "invalid_store")) return issues;
   for (const issue of validateWorkspaceContract(data)) addIssue(issues, "error", issue.code, issue.path, issue.message);
 
   if (!STATUS.project.includes(data.project.status)) addIssue(issues, "error", "invalid_status", STORE_FILES.project, `Unsupported project status: ${data.project.status}`);
@@ -265,9 +235,9 @@ export async function collectIssues(root, data, options = {}) {
     }
     if (item.status === "voided" && (!item.disposition_reason || !item.voided_at)) addIssue(issues, "error", "change_request_void_evidence_missing", STORE_FILES.requirements, `${item.id} is voided without disposition_reason and voided_at`);
     if (item.status === "voided" && item.voided_at && Date.parse(item.voided_at) < Date.parse(item.created_at)) addIssue(issues, "error", "change_request_void_predates_draft", STORE_FILES.requirements, `${item.id} was voided before it was created`);
-    if (["approved", "implemented"].includes(item.status) && item.approved_change_digest !== digestValue(item.change_items)) addIssue(issues, "error", "change_request_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches the approved exact change`);
+    if (["approved", "implemented"].includes(item.status) && item.approved_change_digest !== digestValue(item.change_items ?? null)) addIssue(issues, "error", "change_request_approved_snapshot_mismatch", STORE_FILES.requirements, `${item.id} no longer matches the approved exact change`);
     if ((item.applied_target_ids || []).some((id) => !item.target_ids.includes(id))) addIssue(issues, "error", "change_request_application_mismatch", STORE_FILES.requirements, `${item.id} records an applied target outside its approved target set`);
-    if (item.status === "implemented" && (!item.applied_at || item.target_ids.some((id) => !item.applied_target_ids.includes(id)))) addIssue(issues, "error", "change_request_application_incomplete", STORE_FILES.requirements, `${item.id} is implemented without all targets and applied_at`);
+    if (item.status === "implemented" && (!item.applied_at || item.target_ids.some((id) => !(item.applied_target_ids || []).includes(id)))) addIssue(issues, "error", "change_request_application_incomplete", STORE_FILES.requirements, `${item.id} is implemented without all targets and applied_at`);
     if (["approved", "implemented"].includes(item.status) && (!canApprove(item.approved_by_id, item.approval_scope) || !item.confirmed_by_user_at || !item.effective_at)) addIssue(issues, "error", "change_approval_missing", STORE_FILES.requirements, `${item.id} lacks structured approval evidence or approval scope`);
   }
 
@@ -291,14 +261,18 @@ export async function collectIssues(root, data, options = {}) {
   for (const item of byKind.deliverable || []) {
     validateRefs(issues, item, "requirement_ids", requirementIds, STORE_FILES.deliverables);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.deliverables);
+    let fileStatus;
     if (item.path && !isWorkspaceRelativePath(root, item.path)) addIssue(issues, "error", "invalid_deliverable_path", STORE_FILES.deliverables, `${item.id} path escapes the workspace: ${item.path}`);
-    else if (item.path && !exists(item.path)) addIssue(issues, ["superseded", "cancelled"].includes(item.status) ? "info" : "error", "deliverable_missing", STORE_FILES.deliverables, `${item.id} path does not exist: ${item.path}`);
+    else if (item.path) {
+      fileStatus = await localFileStatus(root, item.path, pendingPaths);
+      if (!fileStatus.available) addMissingFileIssue(item, fileStatus.missing ? "deliverable_missing" : "file_unreadable", STORE_FILES.deliverables, item.path, `${item.id} file unavailable: ${item.path}: ${fileStatus.message}`, ["superseded", "cancelled"].includes(item.status) ? "info" : "error");
+    }
     if (["approved", "delivered", "accepted"].includes(item.status) && (!canApprove(item.approved_by_id, "deliverable") || !item.approved_at)) addIssue(issues, "error", "deliverable_approval_missing", STORE_FILES.deliverables, `${item.id} lacks an active approver in deliverable scope or approval time`);
     if (["approved", "delivered", "accepted"].includes(item.status)) {
       const approvalChange = (byKind.change || []).findLast((change) => change.kind === "deliverable_approval" && change.target_ids.includes(item.id));
       if (!approvalChange || approvalChange.after_hash !== digestFields(item, DELIVERABLE_IMMUTABLE_FIELDS)) addIssue(issues, "error", "deliverable_approved_snapshot_mismatch", STORE_FILES.deliverables, `${item.id} no longer matches its approved metadata snapshot`);
       if (!item.content_sha256) addIssue(issues, "error", "deliverable_content_hash_missing", STORE_FILES.deliverables, `${item.id} has no approved file hash`);
-      else if (item.path && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path)) && checkContentHashes && await sha256Path(path.join(root, item.path)) !== item.content_sha256) addIssue(issues, "error", "deliverable_content_hash_mismatch", STORE_FILES.deliverables, `${item.id} file content differs from the approved hash`);
+      else if (fileStatus?.available && checkContentHashes) await checkContentHash(root, item, STORE_FILES.deliverables, item.content_sha256, "deliverable_content_hash_mismatch", issues);
     }
     if (["delivered", "accepted"].includes(item.status) && !item.delivered_at) addIssue(issues, "error", "delivery_time_missing", STORE_FILES.deliverables, `${item.id} lacks delivered_at`);
     if (item.status === "accepted" && (!item.accepted_at || !canApprove(item.accepted_by_id, "acceptance") || !item.acceptance_evidence)) addIssue(issues, "error", "acceptance_missing", STORE_FILES.deliverables, `${item.id} lacks acceptance authority, time, or evidence`);
@@ -327,7 +301,8 @@ export async function collectIssues(root, data, options = {}) {
     if (!normalized.startsWith("knowledge/wiki/") || !normalized.endsWith(".md") || normalized.includes("../")) addIssue(issues, "error", "invalid_wiki_path", STORE_FILES.catalog, `${item.id} has invalid Wiki path: ${item.path}`);
     if (catalogPaths.has(normalized)) addIssue(issues, "error", "duplicate_wiki_path", STORE_FILES.catalog, `Multiple Wiki records use ${normalized}`);
     catalogPaths.add(normalized);
-    if (!exists(normalized)) addIssue(issues, "error", "wiki_page_missing", STORE_FILES.catalog, `${item.id} page does not exist: ${normalized}`);
+    const fileStatus = await localFileStatus(root, normalized, pendingPaths);
+    if (!fileStatus.available) addMissingFileIssue(item, fileStatus.missing ? "wiki_page_missing" : "file_unreadable", STORE_FILES.catalog, normalized, `${item.id} page unavailable: ${normalized}: ${fileStatus.message}`);
     validateRefs(issues, item, "source_ids", sourceIds, STORE_FILES.catalog);
     validateRefs(issues, item, "related_ids", allIds, STORE_FILES.catalog);
     if (item.superseded_by_id && !ids("wiki").has(item.superseded_by_id)) addIssue(issues, "error", "invalid_supersession", STORE_FILES.catalog, `${item.id} references missing Wiki replacement ${item.superseded_by_id}`);
@@ -347,10 +322,14 @@ export async function collectIssues(root, data, options = {}) {
     }
   }
   if (checkWikiRegistration) {
-    for (const file of await walkMarkdown(path.join(root, "knowledge/wiki"))) {
-      if (file === ".gitkeep") continue;
-      const normalized = `knowledge/wiki/${file}`;
-      if (!catalogPaths.has(normalized)) addIssue(issues, "error", "wiki_not_registered", normalized, "Wiki page is not registered in knowledge/catalog.json");
+    try {
+      for (const file of await walkMarkdown(path.join(root, "knowledge/wiki"))) {
+        if (file === ".gitkeep") continue;
+        const normalized = `knowledge/wiki/${file}`;
+        if (!catalogPaths.has(normalized)) addIssue(issues, "error", "wiki_not_registered", normalized, "Wiki page is not registered in knowledge/catalog.json");
+      }
+    } catch (error) {
+      addIssue(issues, "error", "wiki_scan_failed", "knowledge/wiki", `Wiki registration scan is incomplete: ${error.message}`, "Restore access to the Wiki directory and rerun lint", "local");
     }
   }
 
@@ -411,7 +390,7 @@ export async function collectIssues(root, data, options = {}) {
     if (!ARCHIVE_AVAILABILITY.includes(item.availability)) addIssue(issues, "error", "invalid_archive_availability", STORE_FILES.archive, `${item.id} has invalid availability`);
     if (item.availability === "local" && !exists(item.path)) addIssue(issues, "info", "archive_unavailable", STORE_FILES.archive, `${item.id} is not present on this machine`);
     if (checkContentHashes && data.config.verify_archive_hash_on_lint !== false && item.availability === "local" && isWorkspaceRelativePath(root, item.path) && existsSync(path.join(root, item.path))) {
-      if (await sha256Path(path.join(root, item.path)) !== item.sha256) addIssue(issues, "error", "archive_content_hash_mismatch", STORE_FILES.archive, `${item.id} file content does not match its SHA-256`);
+      await checkContentHash(root, item, STORE_FILES.archive, item.sha256, "archive_content_hash_mismatch", issues);
     }
   }
   for (const source of byKind.source || []) {
@@ -448,9 +427,9 @@ export async function collectIssues(root, data, options = {}) {
     const expected = await generatedEntries(root, data, { pruneActivity: false });
     for (const entry of expected.filter((item) => !item.delete)) {
       try {
-        if (await readFile(path.join(root, entry.path), "utf8") !== entry.content) addIssue(issues, "error", "generated_drift", entry.path, "Generated view is out of sync", "Run the Harness rebuild once");
+        if (await readFile(path.join(root, entry.path), "utf8") !== entry.content) addIssue(issues, "error", "generated_drift", entry.path, "Generated view is out of sync", "Run the Harness rebuild once", "local");
       } catch {
-        addIssue(issues, "error", "generated_missing", entry.path, "Generated view is missing", "Run the Harness rebuild once");
+        addIssue(issues, "error", "generated_missing", entry.path, "Generated view is missing", "Run the Harness rebuild once", "local");
       }
     }
   }
@@ -485,6 +464,8 @@ export async function lintWorkspace(root, { fast = false } = {}) {
     }
   }
   if (issues.length) return summarizeIssues(issues, fast);
+  const shapeIssues = workspaceShapeIssues(data, { validateRecords: false });
+  if (shapeIssues.length) return summarizeIssues(shapeIssues, fast);
   const sizeLimit = Number(data.config?.large_tracked_file_mb) * 1024 * 1024;
   if (Number.isFinite(sizeLimit) && sizeLimit > 0) {
     for (const relative of Object.values(STORE_FILES)) {

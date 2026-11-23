@@ -1,10 +1,24 @@
 import { addDays, clone, localDate, nextWorkspaceId, validTimezone, validateOrThrow } from "./helpers.mjs";
 import { digestValue, validateRecord } from "./model.mjs";
-import { STORE_FILES, readWorkspace } from "./workspace.mjs";
+import { STORE_FILES, readStore, readWorkspace } from "./workspace.mjs";
 import { lintWorkspace } from "./lint.mjs";
-import { generatedEntries, rebuildWorkspace } from "./views.mjs";
+import { rebuildWorkspace, refreshGeneratedViews } from "./views.mjs";
+import { workspaceShapeIssues } from "./workspace-shape.mjs";
 import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.mjs";
 import { captureCompensation } from "./compensation.mjs";
+
+// 带 scope 的问题只影响所指文件、摘要或环境，不影响观察与提案事实；完整 lint 仍保留其严重级别。
+const BLOCKING = (item) => item.level === "error" && !item.scope;
+
+function maintenanceToday(data) {
+  const configuredTimezone = data.project?.timezone || data.config?.default_timezone || "UTC";
+  return localDate(validTimezone(configuredTimezone) ? configuredTimezone : "UTC");
+}
+
+function stoppedReport(data, lint, warnings = []) {
+  const pending = pendingProposalSummary(data, maintenanceToday(data));
+  return { ok: false, proposals_created: [], observations_linked: [], pending_proposals: pending.items, pending_proposals_complete: pending.complete, rule_reviews_due: [], stopped_before_changes: true, warnings, lint };
+}
 
 function pendingProposalSummary(data, today) {
   const proposals = data.proposals?.proposals;
@@ -32,15 +46,25 @@ function pendingProposalSummary(data, today) {
 
 export async function maintainWorkspace(root, options = {}) {
   if (!options.lockHeld) return withWorkspaceLock(root, () => maintainWorkspace(root, { ...options, lockHeld: true }));
-  await rebuildWorkspace(root, { lockHeld: true });
+  let data;
+  try { data = await readWorkspace(root); } catch {
+    // 缺失的权威 Store 仍阻断写入，但不能同时隐藏其他 Store 中可读取的待处置提案。
+    const partial = {};
+    for (const key of ["project", "config", "proposals"]) {
+      try { partial[key] = await readStore(root, key); } catch { /* 发现范围不完整时保留未知。 */ }
+    }
+    return stoppedReport(partial, await lintWorkspace(root));
+  }
+  if (workspaceShapeIssues(data).length) return stoppedReport(data, await lintWorkspace(root));
+  const warnings = [];
+  try { warnings.push(...(await rebuildWorkspace(root, { lockHeld: true })).warnings); } catch (error) {
+    // 校验失败的原因记在警告里，便于排查；完整诊断仍由 lint 给出。
+    const cause = (() => { try { return JSON.parse(error.message); } catch { return { message: error.message }; } })();
+    return stoppedReport(data, await lintWorkspace(root), [{ level: "warning", code: "rebuild_blocked", path: "workspace", message: `Generated views were not refreshed: ${cause.code || cause.message}`, fix: "Resolve the reported lint errors, then rerun maintain" }]);
+  }
   const initialLint = await lintWorkspace(root);
-  const data = await readWorkspace(root);
-  const configuredTimezone = data.project.timezone || data.config.default_timezone || "UTC";
-  const today = localDate(validTimezone(configuredTimezone) ? configuredTimezone : "UTC");
-  const initialPending = pendingProposalSummary(data, today);
-  // 有 lint 错误时停止写入，但继续报告仍可安全读取的待处置提案。
-  // 若提案集合自身损坏，complete=false 明确表示“未知”，不能把空数组解释为没有提案。
-  if (!initialLint.ok) return { ok: false, proposals_created: [], observations_linked: [], pending_proposals: initialPending.items, pending_proposals_complete: initialPending.complete, rule_reviews_due: [], stopped_before_changes: true, lint: initialLint };
+  if (warnings.some((item) => item.cause_code === "transaction_recovery_required") || initialLint.issues.some(BLOCKING)) return stoppedReport(data, initialLint, warnings);
+  const today = maintenanceToday(data);
   const beforeState = clone(data);
   const threshold = Number(data.config.repeat_observation_threshold || 2);
   const groups = new Map();
@@ -93,11 +117,12 @@ export async function maintainWorkspace(root, options = {}) {
     const compensation = await captureCompensation(root, beforeState, data, changedStores, [], result);
     data.changes.operations ||= [];
     data.changes.operations.push({ operation_id: operationId, type: "maintain.rule-proposals", target_ids: [...new Set([...created, ...linked])], recorded_at: new Date().toISOString(), result, compensation });
-    const entries = [jsonEntry(STORE_FILES.proposals, data.proposals), jsonEntry(STORE_FILES.observations, data.observations), jsonEntry(STORE_FILES.changes, data.changes), ...await generatedEntries(root, data)];
+    const entries = [jsonEntry(STORE_FILES.proposals, data.proposals), jsonEntry(STORE_FILES.observations, data.observations), jsonEntry(STORE_FILES.changes, data.changes)];
     await commitTransaction(root, operationId, entries, { lockHeld: true });
+    warnings.push(...(await refreshGeneratedViews(root, data, { operationId, lockHeld: true })).warnings);
   }
-  const lint = await lintWorkspace(root);
-  const refreshed = await readWorkspace(root);
+  const lint = created.length || linked.length ? await lintWorkspace(root) : initialLint;
+  const refreshed = data;
   const rulesDue = (refreshed.rules.rules || []).filter((item) => item.status === "active" && item.review_at.slice(0, 10) <= today).map((item) => {
     const recurrenceCount = item.pattern_key ? (refreshed.observations.observations || []).filter((observation) => observation.pattern_key === item.pattern_key && observation.created_at >= item.effective_at).length : null;
     return { id: item.id, pattern_key: item.pattern_key, recurrence_count: recurrenceCount, recommendation: recurrenceCount === 0 ? "keep" : recurrenceCount === null ? "review_manually" : recurrenceCount === 1 ? "narrow_or_keep" : "revise_or_retire" };
@@ -105,5 +130,5 @@ export async function maintainWorkspace(root, options = {}) {
   // 待处置提案必须有发现入口：否则提案生成后无人问津，长期占着待批准队列。
   // 只报告事实和证据强度，不代替用户决定激活还是驳回。
   const pending = pendingProposalSummary(refreshed, today);
-  return { ok: lint.ok, proposals_created: created, observations_linked: linked, pending_proposals: pending.items, pending_proposals_complete: pending.complete, rule_reviews_due: rulesDue, initial_lint: initialLint, lint };
+  return { ok: lint.ok && !warnings.length, proposals_created: created, observations_linked: linked, pending_proposals: pending.items, pending_proposals_complete: pending.complete, rule_reviews_due: rulesDue, stopped_before_changes: false, warnings: [...new Map(warnings.map((item) => [JSON.stringify(item), item])).values()], initial_lint: initialLint, lint };
 }

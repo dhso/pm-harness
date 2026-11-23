@@ -1,10 +1,11 @@
-import { readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { daysBetween, escapeTable, localDate, mermaidText, text } from "./helpers.mjs";
+import { daysBetween, escapeTable, localDate, mermaidText, text, validTimezone } from "./helpers.mjs";
 import { PREFERENCE_SCOPES } from "./model.mjs";
 import { readWorkspace } from "./workspace.mjs";
-import { commitTransaction, withWorkspaceLock } from "./transaction.mjs";
+import { commitTransaction, safeTransactionTarget, withWorkspaceLock } from "./transaction.mjs";
+import { workspaceShapeIssues } from "./workspace-shape.mjs";
 
 function taskVisualStatus(task) {
   if (task.status === "done") return "done";
@@ -153,7 +154,7 @@ function groupActivities(entries, timezone) {
   return groups;
 }
 
-export async function generatedEntries(root, data, { pruneActivity = true } = {}) {
+export async function generatedEntries(root, data, { pruneActivity = true, warnings } = {}) {
   const timezone = data.project.timezone || data.config.default_timezone || "UTC";
   const groups = groupActivities(data.activity.entries || [], timezone);
   const entries = [
@@ -166,18 +167,58 @@ export async function generatedEntries(root, data, { pruneActivity = true } = {}
   ];
   for (const [date, items] of groups) entries.push({ path: `activity/${date}.md`, content: renderActivityDay(date, items) });
   if (pruneActivity && existsSync(path.join(root, "activity"))) {
-    for (const item of await readdir(path.join(root, "activity"), { withFileTypes: true })) {
-      if (item.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(item.name) && !groups.has(item.name.slice(0, 10))) entries.push({ path: `activity/${item.name}`, delete: true });
+    try {
+      for (const item of await readdir(path.join(root, "activity"), { withFileTypes: true })) {
+        if (item.isFile() && /^\d{4}-\d{2}-\d{2}\.md$/.test(item.name) && !groups.has(item.name.slice(0, 10))) entries.push({ path: `activity/${item.name}`, delete: true });
+      }
+    } catch (error) {
+      if (!warnings) throw error;
+      warnings.push(viewWarning(error, "activity", "generated_scan_failed"));
     }
   }
   return entries;
 }
 
+function viewWarning(error, relativePath = null, code = "generated_views_pending") {
+  let details;
+  try { details = JSON.parse(error.message); } catch { details = { code: error.code, message: error.message }; }
+  if (!details || typeof details !== "object" || Array.isArray(details)) details = { code: error.code, message: error.message };
+  return { level: "warning", code, path: relativePath || details.path || null, message: details.message || error.message, ...(details.code ? { cause_code: details.code } : {}), fix: "Preserve the existing files, resolve the reported view-path problem, then run rebuild; committed facts do not need to be replayed" };
+}
+
+export async function refreshGeneratedViews(root, data, options = {}) {
+  if (!options.lockHeld) return withWorkspaceLock(root, () => refreshGeneratedViews(root, data, { ...options, lockHeld: true }));
+  const warnings = [];
+  const entries = [];
+  try {
+    for (const entry of await generatedEntries(root, data, { warnings })) {
+      try {
+        const target = safeTransactionTarget(root, entry.path, { rejectTargetSymlink: true });
+        const details = await lstat(target).catch((error) => { if (error.code !== "ENOENT") throw error; return null; });
+        if (details && !details.isFile()) throw new Error("Generated view target is not a regular file; preserve it before restoring the path");
+        entries.push(entry);
+      } catch (error) {
+        warnings.push(viewWarning(error, entry.path));
+      }
+    }
+  } catch (error) {
+    warnings.push(viewWarning(error));
+    return { ok: false, updated: [], warnings };
+  }
+  try {
+    const result = await commitTransaction(root, `${options.operationId || `OP-rebuild-${Date.now()}`}.views`, entries, { lockHeld: true, failAfter: options.failAfter });
+    return { ok: !warnings.length, updated: result.committed, warnings };
+  } catch (error) {
+    warnings.push(viewWarning(error));
+    return { ok: false, updated: [], warnings };
+  }
+}
+
 export async function rebuildWorkspace(root, options = {}) {
   if (!options.lockHeld) return withWorkspaceLock(root, () => rebuildWorkspace(root, { ...options, lockHeld: true }));
   const data = await readWorkspace(root);
-  const entries = await generatedEntries(root, data);
-  const operationId = `OP-rebuild-${Date.now()}`;
-  const result = await commitTransaction(root, operationId, entries, { lockHeld: true });
-  return { updated: result.committed };
+  const issues = workspaceShapeIssues(data);
+  if (!validTimezone(data.project?.timezone || data.config?.default_timezone)) issues.push({ level: "error", code: "invalid_timezone", path: "project/project.json", message: "Project/default timezone must be a valid IANA timezone" });
+  if (issues.length) throw new Error(JSON.stringify({ code: "workspace_validation_failed", issues }));
+  return refreshGeneratedViews(root, data, { ...options, lockHeld: true });
 }

@@ -305,6 +305,9 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/references/` | 来源摄取、计划、变更、交付、文件边界和规则演进的详细政策 |
 | `.harness/lib/core.mjs` | 稳定公共 API 门面；CLI 和测试只需从这里导入 |
 | `.harness/lib/workspace.mjs` | 工作区数据文件、集合映射和受控字段定义 |
+| `.harness/lib/workspace-shape.mjs` | 容器与记录形状预检、全局 ID 完整性检查 |
+| `.harness/lib/file-availability.mjs` | 局部文件可用性隔离与内容哈希读取诊断 |
+| `.harness/lib/warnings.mjs` | 非阻断警告的有界样本与计数摘要 |
 | `.harness/lib/model.mjs` | 状态、字段、日期、ID、引用、状态转换和摘要哈希的唯一可执行契约 |
 | `.harness/lib/contracts.mjs` | 统一写入信封、类型化 payload、嵌套记录和工作流步骤的封闭字段契约 |
 | `.harness/lib/helpers.mjs` | 日期、路径、哈希、数组和记录处理等无状态公共函数 |
@@ -317,7 +320,7 @@ Skill 采用“一个主工作流 + 可选能力适配器”的组合方式。`p
 | `.harness/lib/workflow.mjs` | 会议纪要等多实体操作的单层编排与事务结果聚合 |
 | `.harness/lib/transaction.mjs` | 跨文件 staging、统一提交、失败回滚和写锁 |
 | `.harness/lib/compensation.mjs` | 补偿快照、冲突检查和最近操作撤销 |
-| `.harness/lib/views.mjs` | 甘特图、活动、知识、交付物和规则生成视图 |
+| `.harness/lib/views.mjs` | 甘特图、活动、知识、交付物、偏好和规则视图的生成与故障隔离 |
 | `.harness/lib/lint.mjs` | 数据、生命周期、文件、补偿快照和模块边界的只读检查 |
 | `.harness/lib/environment.mjs` | Skills、记忆、软链接和模块规模环境审计 |
 | `.harness/lib/brief.mjs` | 基于近期活动、计划和待办事项生成每日引导 |
@@ -330,7 +333,9 @@ Harness 命令、项目读写和外部工具从项目根执行，通过显式路
 
 npm、pip 使用默认用户级下载缓存，稳定 CLI 从 `PATH` 调用，Harness 正式依赖放在根依赖环境。任务沙箱不安装依赖。
 
-AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、交付物和规则视图，随后检查日期、状态、重复 ID、失效引用、审批范围、基线摘要、任务依赖、完成证据、交付生命周期、Wiki 生命周期、归档哈希、规则提案、补偿快照和生成文件漂移。
+AI Agent 会在重要工作完成后自动重建甘特图、活动、知识、交付物、偏好和规则视图，随后检查日期、状态、重复 ID、失效引用、审批范围、基线摘要、任务依赖、完成证据、交付生命周期、Wiki 生命周期、归档哈希、规则提案、补偿快照和生成文件漂移。
+
+某个交付物文件或索引视图暂时缺失时，不会妨碍无关事实、记忆和偏好的保存，Agent 会告诉你缺了什么、请你恢复。核心数据文件损坏、审批错误等全局问题仍会停止写入。具体边界见[自动化与恢复说明](.harness/references/automation.md)。
 
 结构化 Store 和操作日志会持续增长。Harness 会在超过配置大小阈值时提示；读取优先使用按字段、按条件和按数量限制的查询，不把完整 JSON 复制到对话。维护不会静默删除事实或审计记录；不可直接补偿的长文档也不会再复制整份事实快照。
 

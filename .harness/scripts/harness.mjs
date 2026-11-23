@@ -118,7 +118,10 @@ if (hasFlag("--help") || hasFlag("-h") || command === "help") {
 try {
   const root = requireWorkspaceRoot();
   if (command === "rebuild") {
-    print(await rebuildWorkspace(root));
+    const result = await rebuildWorkspace(root);
+    print(result);
+    // 视图未全部刷新时退出码非 0，使后台收尾能发现失败；事实不受影响，无需重放写入。
+    if (!result.ok) process.exitCode = 1;
   } else if (command === "lint") {
     const result = await lintWorkspace(root, { fast: hasFlag("--fast") });
     if (hasFlag("--json")) print(result);
@@ -132,7 +135,9 @@ try {
   } else if (command === "record") {
     print(await recordOperation(root, await loadInput(root), { dryRun: hasFlag("--dry-run") }));
   } else if (command === "maintain") {
-    print(await maintainWorkspace(root));
+    const result = await maintainWorkspace(root);
+    print(result);
+    if (!result.ok) process.exitCode = 1;
   } else if (command === "undo") {
     const positional = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : null;
     const explicitId = positional || flagValue("--operation-id");

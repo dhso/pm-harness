@@ -3,8 +3,8 @@ import { existsSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { ageInDays } from "./helpers.mjs";
 
-function addIssue(issues, level, code, relativePath, message) {
-  issues.push({ level, code, path: relativePath, message });
+function addIssue(issues, level, code, relativePath, message, scope = null) {
+  issues.push({ level, code, path: relativePath, message, ...(scope ? { scope } : {}) });
 }
 
 const SKILL_KINDS = new Set(["router", "workflow", "capability"]);
@@ -50,7 +50,7 @@ async function addTaskSandboxIssues(root, issues) {
   }
 }
 
-export async function addEnvironmentIssues(root, data, issues) {
+async function addSkillIssues(root, data, issues) {
   const skillRoot = path.join(root, ".agents", "skills");
   if (!existsSync(skillRoot)) addIssue(issues, "error", "skills_missing", ".agents/skills", "Repository Skills directory is missing");
   else if (lstatSync(skillRoot).isSymbolicLink()) addIssue(issues, "error", "skills_symlink", ".agents/skills", "Cross-platform template requires a real Skills directory, not a symlink");
@@ -76,16 +76,18 @@ export async function addEnvironmentIssues(root, data, issues) {
       for (const composed of meta.composes) if (!skillMeta.has(composed)) addIssue(issues, "error", "skill_composes_missing", relative, `Composed skill does not exist: ${composed}`);
     }
   }
+}
 
+async function addModuleIssues(root, data, issues) {
   for (const absolute of await harnessModules(root)) {
     const content = await readFile(absolute, "utf8");
     const lineCount = content.split("\n").length - Number(content.endsWith("\n"));
     const relative = path.relative(root, absolute).split(path.sep).join("/");
     if (lineCount > 500) addIssue(issues, "error", "harness_module_too_large", relative, `Harness module has ${lineCount} lines; split it to at most 500`);
   }
+}
 
-  await addTaskSandboxIssues(root, issues);
-
+async function addCurrentMemoryIssues(root, data, issues) {
   const currentPath = path.join(root, "memory/current.md");
   try {
     const current = await readFile(currentPath, "utf8");
@@ -94,10 +96,12 @@ export async function addEnvironmentIssues(root, data, issues) {
     if (data.project.initialized && !/最近更新：\d{4}-\d{2}-\d{2}T/.test(current)) addIssue(issues, "warning", "current_memory_update_missing", "memory/current.md", "Initialized project memory needs an ISO recent-update timestamp");
     const updatedAt = current.match(/最近更新：(\d{4}-\d{2}-\d{2}T\S+)/)?.[1];
     if (data.project.initialized && updatedAt && (ageInDays(updatedAt) ?? 0) > Number(data.config.memory_current_stale_days || 14)) addIssue(issues, "warning", "current_memory_stale", "memory/current.md", `Current memory has not been refreshed for more than ${data.config.memory_current_stale_days || 14} days`);
-  } catch {
-    addIssue(issues, "error", "current_memory_missing", "memory/current.md", "Current memory file is missing");
+  } catch (error) {
+    addIssue(issues, "error", error.code === "ENOENT" ? "current_memory_missing" : "current_memory_read_failed", "memory/current.md", `Current memory is unavailable: ${error.message}`, "local");
   }
+}
 
+async function addPreferenceIssues(root, data, issues) {
   // 偏好只查条数与退役字段一致性，刻意不查过期：长期偏好没有"过期"语义，
   // 过期类告警会逼着 agent 为消警告而编造记忆。
   const preferences = data.preferences?.preferences || [];
@@ -114,13 +118,29 @@ export async function addEnvironmentIssues(root, data, issues) {
       addIssue(issues, "error", "preference_active_with_retirement", "memory/preferences.json", `${item.id} is active but carries retirement fields`);
     }
   }
+}
 
+async function addStatusIssues(root, data, issues) {
   const statusPath = path.join(root, "project", "status.md");
   try {
     const status = await readFile(statusPath, "utf8");
     if (Buffer.byteLength(status) > Number(data.config.status_max_bytes || 8192)) addIssue(issues, "warning", "project_status_too_large", "project/status.md", "Project status exceeds the configured summary budget");
-  } catch {
-    addIssue(issues, "error", "project_status_missing", "project/status.md", "Project status file is missing");
+  } catch (error) {
+    addIssue(issues, "error", error.code === "ENOENT" ? "project_status_missing" : "project_status_read_failed", "project/status.md", `Project status is unavailable: ${error.message}`, "local");
   }
+}
 
+export async function addEnvironmentIssues(root, data, issues) {
+  // 第三列是检查失败或发现问题时的影响范围；Skill 与模块问题属于环境，不影响事实写入。
+  for (const [relative, inspect, scope] of [
+    [".agents/skills", addSkillIssues, "environment"], [".harness", addModuleIssues, "environment"],
+    ["tmp/tasks", (root, data, issues) => addTaskSandboxIssues(root, issues), null],
+    ["memory/current.md", addCurrentMemoryIssues, null], ["memory/preferences.json", addPreferenceIssues, null], ["project/status.md", addStatusIssues, null],
+  ]) {
+    const start = issues.length;
+    try { await inspect(root, data, issues); } catch (error) {
+      addIssue(issues, "warning", "environment_check_failed", relative, `This environment check is incomplete: ${error.message}; restore access and rerun lint`, scope || "local");
+    }
+    if (scope) for (const issue of issues.slice(start)) issue.scope ||= scope;
+  }
 }

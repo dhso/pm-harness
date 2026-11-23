@@ -77,9 +77,13 @@ node .harness/scripts/harness.mjs undo <operation_id> --confirmed-at <ISO-8601>
 - `query` 只读取目标事实源，并按 ID 或过滤条件返回单条/少量记录。集合名用单数或复数皆可（`task`/`tasks`）；只给 ID 时按前缀自动定位。字段拼错会返回候选，不会静默产生空结果。例：`query REQ-003 --fields status,title`、`query tasks --where status=blocked`。
 - `contract` 只返回一个操作的字段、必填项、默认值和状态转换；AI 优先使用 `--compact`。
 - `brief` 把行动分为三组并跨组去重：`attention_actions`（需响应的风险与紧急工作，附 `attention_summary` 计数）、`top_actions`（常规行动，最多三项）和 `issue_actions`（open/monitoring 问题）。前后两组不设上限，不占常规额度；展示方式见 `pm-daily-brief`，不把完整 JSON 原样转给用户。
-- `rebuild` 只重建甘特图、活动、知识、交付物和规则视图。
-- `lint` 检查可执行数据契约、引用、审批、基线摘要、生命周期、Wiki/归档和操作补偿快照，并提示任务沙箱根目录中残留的依赖环境或包管理器缓存。`--fast` 跳过归档与交付物的逐文件 SHA-256 校验，用于任务收尾；返回结果标记 `mode` 和被跳过的检查。
-- `maintain` 最多执行一次安全重建、一次完整检查（含文件哈希）、规则候选去重和到期规则复查，不启动后台循环。返回的 `pending_proposals` 是待处置规则提案的唯一发现入口（含证据条数与 `overdue`），`pending_proposals_complete` 表示本次发现是否完整；为 `false` 时不得把空数组解释为没有提案。`rule_reviews_due` 给出到期规则的保留/收窄/退役建议；两者都只报告事实，处置须由用户决定。
+- `rebuild` 只重建甘特图、活动、知识、交付物、偏好和规则视图，不生成 `memory/current.md` 与 `project/status.md`（用各自的 `record` 操作更新）。视图未全部刷新时 `ok:false` 且退出码为 1。
+- 事实与摘要先提交，派生视图随后刷新；视图失败不回滚事实，返回 `generated_views_pending` 警告。看到该警告：排除故障后运行一次 `rebuild`，不要重放已提交的 `record`。
+- 无关记录的交付物、Wiki 正文缺失或不可读时，本次无关写入仍成功并返回 `outside_operation` 警告；操作涉及的对象缺文件则整体拒绝。向用户报告缺哪个文件并请其从原件或备份恢复，不要补造内容或改状态消除警告。
+- 警告在响应里每类最多 3 条样本，另附 `warning_summary`（总数、各类数量、`omitted`）；完整清单用 `lint --json`。同一 `operation_id` 重试只返回原提交的计数，不重复展开。
+- `source.register` 的哈希、去重和归档共用一次原件读取；每次请求独立保存 `raw_input_sha256`，即使按来源地址去重返回了旧版本也不混用内容哈希。提交后若临时原件已被清理，用同一 `operation_id` 和原请求重试会复用原记录并返回 `source_original_unavailable`；请求内容变化则报 `operation_id_conflict`。
+- `lint` 检查数据契约、引用、审批、基线摘要、生命周期、Wiki/归档、补偿快照和环境，并列出相互独立的全部错误，不因一处错误隐藏其他诊断。问题的 `scope` 标明影响范围：`local`（只影响所指文件或摘要）、`environment`（Skill 与模块）、`outside_operation`（本次操作之外）；无 `scope` 的错误是全局问题。`--fast` 跳过归档与交付物的逐文件哈希校验，返回结果标记 `mode` 和被跳过的检查。
+- `maintain` 单次执行重建、完整检查（含哈希）、规则候选去重和到期规则复查，不启动后台循环。只有无 `scope` 的错误或事务待恢复才会在修改前停止（`stopped_before_changes:true`）；带 `scope` 的问题不阻断提案落地。`ok` 表示整次维护是否完整通过，退出码非 0 表示仍有问题待处理，不要因此重放已提交记录。`pending_proposals` 是待处置提案的唯一入口，`pending_proposals_complete:false` 时不得把空数组当作没有提案；`rule_reviews_due` 给出到期规则的保留/收窄/退役建议。两者只报告事实，处置由用户决定。
 - `status.update` 和 `memory.current.update` 用事务更新人读摘要；不要在事实 JSON 已提交后再用非事务方式覆盖这两个文件。
 - `lint` 会提示过大的结构化 Store。读取优先使用 `query --fields ... --limit ...`，不要把完整 JSON 复制进对话；压缩或归档必须保留事实、ID 和审计可追溯性。
 - `undo` 撤销最近一次可补偿写入；不知道 `operation_id` 时先用 `undo --latest --dry-run` 查找并预演（`--latest` 只能预演），用户确认后用返回的 ID 执行。用户要求撤销时读取[撤销流程](../../.agents/skills/pm-maintain/references/undo.md)。

@@ -19,7 +19,6 @@ import {
   normalizeArray,
   safeWorkspaceInputPath,
   sameBaseline,
-  sha256Path,
   upsert,
   validateOrThrow,
 } from "./helpers.mjs";
@@ -32,7 +31,9 @@ import {
 } from "./workspace.mjs";
 import { addControlledChange, assertUserConfirmation, verifyApproval } from "./approval.mjs";
 import { collectIssues } from "./lint.mjs";
-import { generatedEntries } from "./views.mjs";
+import { refreshGeneratedViews } from "./views.mjs";
+import { workspaceShapeIssues } from "./workspace-shape.mjs";
+import { appendWarnings, countWarnings, sampleWarnings, warningFields, withDisplay } from "./warnings.mjs";
 import { commitTransaction, jsonEntry, withWorkspaceLock } from "./transaction.mjs";
 import { applyWorkflow } from "./workflow.mjs";
 import { applyContentOperation } from "./content-operations.mjs";
@@ -52,7 +53,7 @@ function diffRecords(before, after, store, collection) {
     }
     previous.delete(item.id);
     if (digestValue(old) === digestValue(item)) continue;
-    const fields = [...new Set([...Object.keys(old), ...Object.keys(item)])].filter((field) => digestValue(old[field]) !== digestValue(item[field]));
+    const fields = [...new Set([...Object.keys(old), ...Object.keys(item)])].filter((field) => digestValue({ value: old[field] }) !== digestValue({ value: item[field] }));
     changes.push({
       store,
       collection,
@@ -76,7 +77,7 @@ function diffStores(before, after, changedStores) {
   }
   // 项目存储不是集合，单独比较标量字段。
   if (changedStores.has("project")) {
-    const fields = [...new Set([...Object.keys(before.project || {}), ...Object.keys(after.project || {})])].filter((field) => digestValue(before.project?.[field]) !== digestValue(after.project?.[field]));
+    const fields = [...new Set([...Object.keys(before.project || {}), ...Object.keys(after.project || {})])].filter((field) => digestValue({ value: before.project?.[field] }) !== digestValue({ value: after.project?.[field] }));
     if (fields.length) {
       changes.push({
         store: "project",
@@ -101,12 +102,33 @@ export async function recordOperation(root, input, options = {}) {
   const envelopeIssues = [...validateOperationEnvelope(envelope), ...validateOperationContract(envelope)];
   if (envelopeIssues.length) throw new Error(JSON.stringify({ code: "operation_validation_failed", issues: envelopeIssues }));
   const data = options.data || await readWorkspace(root);
-  const rawInputHash = envelope.type === "source.register" && envelope.payload.raw_path ? await sha256Path(await safeWorkspaceInputPath(root, envelope.payload.raw_path)) : null;
+  const shapeIssues = workspaceShapeIssues(data, { validateRecords: false });
+  if (shapeIssues.length) throw new Error(JSON.stringify({ code: "workspace_validation_failed", issues: shapeIssues }));
+  const existingOperation = data.changes.operations.find((item) => item.operation_id === envelope.operation_id);
+  let rawInputHash = null;
+  let rawInputContent = null;
+  let sourceWarning;
+  if (envelope.type === "source.register" && envelope.payload.raw_path) {
+    try {
+      rawInputContent = await readFile(await safeWorkspaceInputPath(root, envelope.payload.raw_path));
+      rawInputHash = createHash("sha256").update(rawInputContent).digest("hex");
+    } catch (error) {
+      // 临时输入清理后仍可确认同一次已提交请求；用原提交哈希核对完整 envelope，绝不补造新来源。
+      const recordedHash = existingOperation?.result?.raw_input_sha256 || existingOperation?.result?.source?.sha256;
+      if (!existingOperation?.request_hash || !recordedHash || !["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+      rawInputHash = recordedHash;
+      sourceWarning = { level: "warning", code: "source_original_unavailable", path: envelope.payload.raw_path, message: "The original input is unavailable; this response reuses the verified committed request", fix: "Use the archived original for further work; do not replay this source as a new record" };
+    }
+  }
   const requestHash = digestValue(rawInputHash ? { envelope, raw_input_sha256: rawInputHash } : envelope);
-  const existingOperation = (data.changes.operations || []).find((item) => item.operation_id === envelope.operation_id);
   if (existingOperation) {
     if (existingOperation.request_hash && existingOperation.request_hash !== requestHash) throw new Error(JSON.stringify({ code: "operation_id_conflict", operation_id: envelope.operation_id, fix: "Use the original request or allocate a new stable operation_id" }));
-    return { ok: true, idempotent: true, operation_id: envelope.operation_id, target_ids: existingOperation.target_ids, ...(existingOperation.result || {}) };
+    const response = { ok: true, idempotent: true, operation_id: envelope.operation_id, target_ids: existingOperation.target_ids, ...(existingOperation.result || {}) };
+    // 审计只保存计数；重放时没有样本，明细交给 lint，避免把提交时的文件状态当作现在的状态。
+    if (response.warning_summary) response.warning_summary = withDisplay(response.warning_summary, 0);
+    appendWarnings(response, sourceWarning ? [sourceWarning] : []);
+    if (!options.deferCommit && !options.dryRun) appendWarnings(response, (await refreshGeneratedViews(root, data, { operationId: envelope.operation_id, lockHeld: true })).warnings);
+    return response;
   }
   const now = new Date().toISOString();
   const changedStores = new Set();
@@ -194,12 +216,9 @@ export async function recordOperation(root, input, options = {}) {
     result = { stakeholder: record };
   } else if (envelope.type === "source.register") {
     const payload = envelope.payload;
-    let rawContent = null;
-    let hash = payload.sha256 || null;
-    if (payload.raw_path) {
-      rawContent = await readFile(await safeWorkspaceInputPath(root, payload.raw_path));
-      hash = createHash("sha256").update(rawContent).digest("hex");
-    }
+    // 哈希、去重和归档共用同一次读取的字节，避免输入在两次读取之间变化。
+    const rawContent = rawInputContent;
+    const hash = rawInputHash || payload.sha256 || null;
     const duplicate = data.sources.sources.find((item) => hash && item.sha256 === hash || payload.source_locator && item.source_locator === payload.source_locator || payload.thread_id && payload.source_time && item.thread_id === payload.thread_id && item.source_time === payload.source_time && item.sender === (payload.sender || null));
     if (duplicate) {
       resultIds.push(duplicate.id);
@@ -354,6 +373,8 @@ export async function recordOperation(root, input, options = {}) {
     result = await applyContentOperation({ root, envelope, data, now, changedStores, extraEntries, resultIds });
   }
 
+  // 来源地址去重可能返回另一版原件；请求哈希须独立保存，不能借用返回来源的内容哈希。
+  if (rawInputHash) result.raw_input_sha256 = rawInputHash;
   const response = { ok: true, idempotent: false, operation_id: envelope.operation_id, target_ids: [...new Set(resultIds)], ...result };
   if (options.deferCommit) return { ...response, transaction: { changed_stores: [...changedStores], entries: extraEntries } };
   const uniqueExtraEntries = [...new Map(extraEntries.map((entry) => [entry.path, entry])).values()];
@@ -361,15 +382,25 @@ export async function recordOperation(root, input, options = {}) {
     ? { version: 2, reversible: false, records: [], metadata: [], documents: [], retained_paths: [], blocked_paths: [] }
     : await captureCompensation(root, beforeState, data, changedStores, uniqueExtraEntries, result);
   data.changes.operations ||= [];
-  data.changes.operations.push({ operation_id: envelope.operation_id, request_hash: requestHash, type: envelope.type, target_ids: [...new Set(resultIds)], recorded_at: now, result: clone(result), compensation });
+  const operationRecord = { operation_id: envelope.operation_id, request_hash: requestHash, type: envelope.type, target_ids: [...new Set(resultIds)], recorded_at: now, result: clone(result), compensation };
+  data.changes.operations.push(operationRecord);
   changedStores.add("changes");
+  const changes = diffStores(beforeState, data, changedStores);
+  // 工作流合并全部步骤的目标；差异还覆盖被隐式更新的前序版本和补偿恢复的记录。
+  // 即使操作结果没有变化，显式目标也必须通过自己的文件可用性检查。
+  const fileTargetIds = new Set([...resultIds, ...changes.map((item) => item.id)]);
   const pendingPaths = extraEntries.filter((item) => !item.delete).map((item) => item.path);
-  const validation = await collectIssues(root, data, { checkFiles: false, checkGenerated: false, pendingPaths });
+  const validation = await collectIssues(root, data, { checkFiles: false, checkGenerated: false, pendingPaths, fileTargetIds });
   const errors = validation.filter((item) => item.level === "error");
   if (errors.length) throw new Error(JSON.stringify({ code: "workspace_validation_failed", issues: errors }));
+  const fileWarnings = validation.filter((item) => item.scope === "outside_operation");
+  Object.assign(response, warningFields(fileWarnings));
+  // 幂等重试须复用原提交的警告，不能把成功写入解释为缺失文件已经恢复；审计只存计数，避免已知异常反复放大日志。
+  if (fileWarnings.length) operationRecord.result.warning_summary = countWarnings(fileWarnings);
   // dry-run：审批、校验、状态转换都已按真实路径跑完，只是不落盘。
   // 用途是先向用户展示 before/after 再执行，不得据此跳过任何护栏。
   if (options.dryRun) {
+    const previewWarnings = validation.filter((item) => item.level === "warning");
     return {
       ok: true,
       dry_run: true,
@@ -377,21 +408,23 @@ export async function recordOperation(root, input, options = {}) {
       operation_id: envelope.operation_id,
       type: envelope.type,
       target_ids: [...new Set(resultIds)],
-      changes: diffStores(beforeState, data, changedStores),
+      changes,
       changed_stores: [...changedStores].sort(),
       would_write: [...new Set([...[...changedStores].map((key) => STORE_FILES[key]), ...extraEntries.map((item) => item.path)])].sort(),
-      warnings: validation.filter((item) => item.level === "warning"),
+      warnings: sampleWarnings(previewWarnings),
+      ...(previewWarnings.length ? { warning_summary: warningFields(previewWarnings).warning_summary } : {}),
       ...result,
     };
   }
   const entries = [...changedStores].map((key) => jsonEntry(STORE_FILES[key], data[key]));
   entries.push(...uniqueExtraEntries);
-  entries.push(...await generatedEntries(root, data));
   // 一个 workflow 可能同时自动同步摘要、又显式提交 status/memory 更新；同一事务只保留最后一次内容。
   const uniqueEntries = [...new Map(entries.map((entry) => [entry.path, entry])).values()];
   await commitTransaction(root, envelope.operation_id, uniqueEntries, {
     failAfter: options.failAfter,
     lockHeld: true,
   });
-  return response;
+  // 事实、显式摘要、Wiki 和原件先原子落地；派生视图失败不抹掉已确认的记录。
+  const views = await refreshGeneratedViews(root, data, { operationId: envelope.operation_id, lockHeld: true, failAfter: options.viewFailAfter });
+  return appendWarnings(response, views.warnings);
 }

@@ -196,6 +196,7 @@ export async function commitTransaction(root, operationId, entries, options = {}
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
       const target = safeTransactionTarget(root, entry.path);
+      if (existsSync(target) && lstatSync(target).isDirectory()) throw new Error(JSON.stringify({ code: "transaction_target_not_file", path: entry.path, fix: "Preserve the directory and restore the intended file path before retrying" }));
       const staged = path.join(transactionRoot, "new", `${index}.data`);
       const backup = path.join(transactionRoot, "old", `${index}.data`);
       if (!entry.delete) {
